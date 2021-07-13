@@ -27,19 +27,19 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.github.javaparser.ast.expr.BinaryExpr;
+import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.MethodCallExpr;
+import org.drools.compiler.compiler.DescrBuildError;
 import org.drools.compiler.lang.descr.AccumulateDescr;
 import org.drools.compiler.lang.descr.BaseDescr;
 import org.drools.compiler.lang.descr.ExprConstraintDescr;
 import org.drools.compiler.lang.descr.PatternDescr;
 import org.drools.compiler.lang.descr.PatternSourceDescr;
 import org.drools.core.util.ClassUtils;
+import org.drools.modelcompiler.builder.PackageModel;
+import org.drools.modelcompiler.builder.errors.InvalidExpressionErrorResult;
 import org.drools.modelcompiler.builder.generator.AggregateKey;
 import org.drools.modelcompiler.builder.generator.ConstraintUtil;
-import org.drools.modelcompiler.builder.generator.drlxparse.ParseResultVisitor;
-import org.drools.mvel.parser.ast.expr.OOPathExpr;
-import com.github.javaparser.ast.expr.Expression;
-import com.github.javaparser.ast.expr.MethodCallExpr;
-import org.drools.modelcompiler.builder.PackageModel;
 import org.drools.modelcompiler.builder.generator.DeclarationSpec;
 import org.drools.modelcompiler.builder.generator.DrlxParseUtil;
 import org.drools.modelcompiler.builder.generator.RuleContext;
@@ -49,19 +49,19 @@ import org.drools.modelcompiler.builder.generator.drlxparse.ConstraintParser;
 import org.drools.modelcompiler.builder.generator.drlxparse.DrlxParseFail;
 import org.drools.modelcompiler.builder.generator.drlxparse.DrlxParseResult;
 import org.drools.modelcompiler.builder.generator.drlxparse.DrlxParseSuccess;
+import org.drools.modelcompiler.builder.generator.drlxparse.ParseResultVisitor;
 import org.drools.modelcompiler.builder.generator.drlxparse.ParseResultVoidVisitor;
 import org.drools.modelcompiler.builder.generator.visitor.DSLNode;
 import org.drools.modelcompiler.builder.generator.visitor.FromVisitor;
 
 import static org.drools.model.impl.NamesGenerator.generateName;
+import static org.drools.model.impl.VariableImpl.GENERATED_VARIABLE_PREFIX;
 import static org.drools.modelcompiler.builder.generator.DrlxParseUtil.getPatternListenedProperties;
 import static org.drools.modelcompiler.builder.generator.DrlxParseUtil.validateDuplicateBindings;
 import static org.drools.modelcompiler.util.StreamUtils.optionalToStream;
 import static org.drools.mvel.parser.printer.PrintUtil.printConstraint;
 
 public abstract class PatternDSL implements DSLNode {
-
-    public static final String GENERATED_PATTERN_PREFIX = "GENERATED_";
 
     protected final RuleContext context;
     protected final PackageModel packageModel;
@@ -110,13 +110,13 @@ public abstract class PatternDSL implements DSLNode {
             final String patternNameAggregated = findFirstInnerBinding(constraintDescrs, patternType)
                     .map(ib -> context.getAggregatePatternMap().putIfAbsent(new AggregateKey(ib, patternType), generatedName))
                     .orElse(generatedName);
-            pattern.setIdentifier(GENERATED_PATTERN_PREFIX + patternNameAggregated);
+            pattern.setIdentifier( GENERATED_VARIABLE_PREFIX + patternNameAggregated);
         }
     }
 
     private Optional<String> findFirstInnerBinding(List<? extends BaseDescr> constraintDescrs, Class<?> patternType) {
         return constraintDescrs.stream()
-                .map( constraint -> ConstraintExpression.createConstraintExpression( patternType, constraint, isPositional(constraint) ).getExpression() )
+                .map( constraint -> ConstraintExpression.createConstraintExpression( context, patternType, constraint, isPositional(constraint) ).getExpression() )
                 .map( DrlxParseUtil::parseExpression )
                 .filter( drlx -> drlx.getBind() != null )
                 .map( drlx -> drlx.getBind().asString() )
@@ -132,9 +132,18 @@ public abstract class PatternDSL implements DSLNode {
 
             boolean isPositional = isPositional(constraint);
 
-            ConstraintExpression constraintExpression = ConstraintExpression.createConstraintExpression(patternType, constraint, isPositional);
+            ConstraintExpression constraintExpression = ConstraintExpression.createConstraintExpression(context, patternType, constraint, isPositional);
+            if (constraintExpression == null) {
+                continue;
+            }
 
-            DrlxParseResult drlxParseResult = constraintParser.drlxParse(patternType, patternIdentifier, constraintExpression, isPositional);
+            DrlxParseResult drlxParseResult;
+            try {
+                context.setCurrentConstraintDescr(Optional.of(constraint));
+                drlxParseResult = constraintParser.drlxParse(patternType, patternIdentifier, constraintExpression, isPositional);
+            } finally {
+                context.resetCurrentConstraintDescr();
+            }
 
             String expression = constraintExpression.getExpression();
             if (drlxParseResult.isSuccess() && (( DrlxParseSuccess ) drlxParseResult).isRequiresSplit() && (( DrlxParseSuccess ) drlxParseResult).getExpr().isBinaryExpr()) {
@@ -197,14 +206,33 @@ public abstract class PatternDSL implements DSLNode {
     }
 
     void buildConstraint(PatternDescr pattern, Class<?> patternType, PatternConstraintParseResult patternConstraintParseResult) {
-        DrlxParseResult drlxParseResult1 = patternConstraintParseResult.getDrlxParseResult();
+        DrlxParseResult drlxParseResult = patternConstraintParseResult.getDrlxParseResult();
         String expression = patternConstraintParseResult.getExpression();
 
-        drlxParseResult1.accept(
+        DrlxParseResult withBindingCheck = drlxParseResult.acceptWithReturnValue(new ParseResultVisitor<DrlxParseResult>() {
+            @Override
+            public DrlxParseResult onSuccess(DrlxParseSuccess drlxParseResult) {
+
+                String exprBinding = drlxParseResult.getExprBinding();
+                if (exprBinding == null && !drlxParseResult.isPredicate() && !drlxParseResult.getImplicitCastExpression().isPresent()) {
+                    return new DrlxParseFail(new DescrBuildError(context.getRuleDescr(), context.getRuleDescr(), "",
+                                                                 String.format("Predicate '%s' must be a Boolean expression", drlxParseResult.getOriginalDrlConstraint())));
+                } else {
+                    return drlxParseResult;
+                }
+            }
+
+            @Override
+            public DrlxParseResult onFail(DrlxParseFail failure) {
+                return failure;
+            }
+        });
+
+        withBindingCheck.accept(
                 new ParseResultVoidVisitor() {
                     @Override
                     public void onSuccess( DrlxParseSuccess drlxParseResult ) {
-                        DSLNode constraint = drlxParseResult.getExpr() instanceof OOPathExpr ?
+                        DSLNode constraint = drlxParseResult.isOOPath() ?
                             new ConstraintOOPath( context, packageModel, pattern, patternType, patternConstraintParseResult, expression, drlxParseResult ) :
                             createSimpleConstraint( drlxParseResult, pattern );
                         constraint.buildPattern();
@@ -249,22 +277,24 @@ public abstract class PatternDSL implements DSLNode {
     }
 
     Set<String> getSettableWatchedProps() {
-        Set<String> watchedProps = new HashSet<>();
-        watchedProps.addAll(context.getRuleDescr().lookAheadFieldsOfIdentifier(pattern));
-        watchedProps.addAll(getPatternListenedProperties(pattern));
-
-        if (watchedProps.isEmpty()) {
-            return watchedProps;
-        }
-        Collection<String> settableProps = ClassUtils.getAccessibleProperties( patternType );
         Set<String> settableWatchedProps = new HashSet<>();
-        for (String watchedProp : watchedProps) {
-            String actualProp = watchedProp.startsWith( "!" ) ? watchedProp.substring( 1 ) : watchedProp;
-            if (actualProp.equals( "*" ) || settableProps.contains( actualProp )) {
-                settableWatchedProps.add( watchedProp );
-            }
-        }
+        Collection<String> settableProps = ClassUtils.getAccessibleProperties(patternType);
+
+        Collection<String> lookAheadProps = context.getRuleDescr().lookAheadFieldsOfIdentifier(pattern);
+        lookAheadProps.stream().forEach(prop -> populateSettableWatchedProps(prop, settableProps, settableWatchedProps, false)); // okay to have non-settable prop in lookAhead
+
+        List<String> propertiesInWatch = getPatternListenedProperties(pattern);
+        propertiesInWatch.stream().forEach(prop -> populateSettableWatchedProps(prop, settableProps, settableWatchedProps, true));
         return settableWatchedProps;
+    }
+
+    private void populateSettableWatchedProps(String prop, Collection<String> settableProps, Set<String> settableWatchedProps, boolean raiseErrorForNonSettableProp) {
+        String actualProp = prop.startsWith("!") ? prop.substring(1) : prop;
+        if (actualProp.equals("*") || settableProps.contains(actualProp)) {
+            settableWatchedProps.add(prop);
+        } else if (raiseErrorForNonSettableProp) {
+            context.addCompilationError(new InvalidExpressionErrorResult("Unknown property " + actualProp + " in @watch annotation"));
+        }
     }
 
     protected abstract void buildPattern(DeclarationSpec declarationSpec, List<PatternConstraintParseResult> patternConstraintParseResults);

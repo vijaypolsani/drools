@@ -17,9 +17,13 @@
 package org.drools.modelcompiler;
 
 import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -27,8 +31,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.drools.core.ClockType;
 import org.drools.core.common.EventFactHandle;
 import org.drools.core.time.impl.PseudoClockScheduler;
+import org.drools.modelcompiler.domain.DateTimeHolder;
 import org.drools.modelcompiler.domain.StockFact;
 import org.drools.modelcompiler.domain.StockTick;
+import org.drools.modelcompiler.domain.StockTickEx;
 import org.junit.Test;
 import org.kie.api.KieServices;
 import org.kie.api.builder.model.KieModuleModel;
@@ -37,9 +43,11 @@ import org.kie.api.definition.type.FactType;
 import org.kie.api.runtime.KieSession;
 import org.kie.api.runtime.conf.ClockTypeOption;
 import org.kie.api.runtime.rule.EntryPoint;
+import org.kie.api.time.Calendar;
 import org.kie.api.time.SessionClock;
 import org.kie.api.time.SessionPseudoClock;
 
+import static org.drools.modelcompiler.util.EvaluationUtil.convertDate;
 import static org.junit.Assert.assertEquals;
 
 public class CepTest extends BaseModelTest {
@@ -945,6 +953,312 @@ public class CepTest extends BaseModelTest {
 
         } finally {
             ksession.dispose();
+        }
+    }
+
+    @Test
+    public void testAfterBindingFirst() throws Exception {
+        String str =
+                "import " + StockTick.class.getCanonicalName() + ";" +
+                        "rule R when\n" +
+                        "    $a : StockTick( company == \"DROO\" )\n" +
+                        "    $b : StockTick( company == \"ACME\", $a after[5s,8s] this )\n" +
+                        "then\n" +
+                        "  System.out.println(\"fired\");\n" +
+                        "end\n";
+
+        KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+        SessionPseudoClock clock = ksession.getSessionClock();
+
+        ksession.insert( new StockTick( "ACME" ) );
+        clock.advanceTime( 6, TimeUnit.SECONDS );
+        ksession.insert( new StockTick( "DROO" ) );
+
+        assertEquals( 1, ksession.fireAllRules() );
+
+        clock.advanceTime( 4, TimeUnit.SECONDS );
+        ksession.insert( new StockTick( "DROO" ) );
+
+        assertEquals( 0, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testAfterOnLongFieldsBindingFirst() throws Exception {
+        String str =
+                "import " + StockTick.class.getCanonicalName() + ";\n" +
+                     "declare StockTick @timestamp(timeFieldAsLong) end\n" +
+                     "rule R when\n" +
+                     "    $a : StockTick( company == \"DROO\" )\n" +
+                     "    StockTick( company == \"ACME\", $a.timeFieldAsLong after[5,8] timeFieldAsLong )\n" +
+                     "then\n" +
+                     "  System.out.println(\"fired\");\n" +
+                     "end\n";
+
+        KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+        SessionPseudoClock clock = ksession.getSessionClock();
+
+        ksession.insert(new StockTick("ACME").setTimeField(0));
+        ksession.insert(new StockTick("DROO").setTimeField(6));
+
+        assertEquals(1, ksession.fireAllRules());
+
+        ksession.insert(new StockTick("DROO").setTimeField(10));
+
+        assertEquals(0, ksession.fireAllRules());
+    }
+
+    @Test
+    public void testBefore() throws Exception {
+        String str =
+                "import " + StockTick.class.getCanonicalName() + ";" +
+                        "rule R when\n" +
+                        "    $a : StockTick( company == \"DROO\" )\n" +
+                        "    $b : StockTick( company == \"ACME\", this before[5s,8s] $a )\n" +
+                        "then\n" +
+                        "  System.out.println(\"fired\");\n" +
+                        "end\n";
+
+        KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+        SessionPseudoClock clock = ksession.getSessionClock();
+
+        ksession.insert( new StockTick( "ACME" ) );
+        clock.advanceTime( 6, TimeUnit.SECONDS );
+        ksession.insert( new StockTick( "DROO" ) );
+
+        assertEquals( 1, ksession.fireAllRules() );
+
+        clock.advanceTime( 4, TimeUnit.SECONDS );
+        ksession.insert( new StockTick( "DROO" ) );
+
+        assertEquals( 0, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testBeforeBindingFirst() throws Exception {
+        String str =
+                "import " + StockTick.class.getCanonicalName() + ";" +
+                        "rule R when\n" +
+                        "    $a : StockTick( company == \"DROO\" )\n" +
+                        "    $b : StockTick( company == \"ACME\", $a before[5s,8s] this )\n" +
+                        "then\n" +
+                        "  System.out.println(\"fired\");\n" +
+                        "end\n";
+
+        KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+        SessionPseudoClock clock = ksession.getSessionClock();
+
+        ksession.insert( new StockTick( "DROO" ) );
+        clock.advanceTime( 6, TimeUnit.SECONDS );
+        ksession.insert( new StockTick( "ACME" ) );
+
+        assertEquals( 1, ksession.fireAllRules() );
+
+        clock.advanceTime( 4, TimeUnit.SECONDS );
+        ksession.insert( new StockTick( "ACME" ) );
+
+        assertEquals( 0, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testBeforeOnLongFields() throws Exception {
+        String str =
+                "import " + StockTick.class.getCanonicalName() + ";\n" +
+                     "declare StockTick @timestamp(timeFieldAsLong) end\n" +
+                     "rule R when\n" +
+                     "    $a : StockTick( company == \"DROO\" )\n" +
+                     "    $b : StockTick( company == \"ACME\", timeFieldAsLong before[5,8] $a.timeFieldAsLong )\n" +
+                     "then\n" +
+                     "  System.out.println(\"fired\");\n" +
+                     "end\n";
+
+        KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+        SessionPseudoClock clock = ksession.getSessionClock();
+
+        ksession.insert(new StockTick("ACME").setTimeField(0));
+        ksession.insert(new StockTick("DROO").setTimeField(6));
+
+        assertEquals(1, ksession.fireAllRules());
+
+        ksession.insert(new StockTick("DROO").setTimeField(10));
+
+        assertEquals(0, ksession.fireAllRules());
+    }
+
+    @Test
+    public void testBeforeOnLongFieldsBindingFirst() throws Exception {
+        String str =
+                "import " + StockTick.class.getCanonicalName() + ";\n" +
+                     "declare StockTick @timestamp(timeFieldAsLong) end\n" +
+                     "rule R when\n" +
+                     "    $a : StockTick( company == \"DROO\" )\n" +
+                     "    $b : StockTick( company == \"ACME\", $a.timeFieldAsLong before[5,8] timeFieldAsLong )\n" +
+                     "then\n" +
+                     "  System.out.println(\"fired\");\n" +
+                     "end\n";
+
+        KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+        SessionPseudoClock clock = ksession.getSessionClock();
+
+        ksession.insert(new StockTick("DROO").setTimeField(0));
+        ksession.insert(new StockTick("ACME").setTimeField(6));
+
+        assertEquals(1, ksession.fireAllRules());
+
+        ksession.insert(new StockTick("ACME").setTimeField(10));
+
+        assertEquals(0, ksession.fireAllRules());
+    }
+
+    @Test
+    public void testBeforeOnLongFieldsWithDifferentMethod() throws Exception {
+        String str =
+                "import " + StockTick.class.getCanonicalName() + ";\n" +
+                     "import " + StockTickEx.class.getCanonicalName() + ";\n" +
+                     "declare StockTick @timestamp(timeFieldAsLong) end\n" +
+                     "declare StockTickEx @timestamp(timeFieldExAsLong) end\n" +
+                     "rule R when\n" +
+                     "    $a : StockTickEx( company == \"DROO\" )\n" +
+                     "    StockTick( company == \"ACME\", timeFieldAsLong before[5,8] $a.timeFieldExAsLong )\n" +
+                     "then\n" +
+                     "  System.out.println(\"fired\");\n" +
+                     "end\n";
+
+        KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+        SessionPseudoClock clock = ksession.getSessionClock();
+
+        ksession.insert(new StockTick("ACME").setTimeField(0));
+        ksession.insert(new StockTickEx("DROO").setTimeFieldEx(6));
+
+        assertEquals(1, ksession.fireAllRules());
+
+        ksession.insert(new StockTickEx("DROO").setTimeFieldEx(10));
+
+        assertEquals(0, ksession.fireAllRules());
+    }
+
+    @Test
+    public void testAfterOnLongFieldsBindingFirstWithDifferentMethod() throws Exception {
+        String str =
+                "import " + StockTick.class.getCanonicalName() + ";\n" +
+                     "import " + StockTickEx.class.getCanonicalName() + ";\n" +
+                     "declare StockTick @timestamp(timeFieldAsLong) end\n" +
+                     "declare StockTickEx @timestamp(timeFieldExAsLong) end\n" +
+                     "rule R when\n" +
+                     "    $a : StockTickEx( company == \"DROO\" )\n" +
+                     "    StockTick( company == \"ACME\", $a.timeFieldExAsLong after[5,8] timeFieldAsLong )\n" +
+                     "then\n" +
+                     "  System.out.println(\"fired\");\n" +
+                     "end\n";
+
+        KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+        SessionPseudoClock clock = ksession.getSessionClock();
+
+        ksession.insert(new StockTick("ACME").setTimeField(0));
+        ksession.insert(new StockTickEx("DROO").setTimeFieldEx(6));
+
+        assertEquals(1, ksession.fireAllRules());
+
+        ksession.insert(new StockTickEx("DROO").setTimeFieldEx(10));
+
+        assertEquals(0, ksession.fireAllRules());
+    }
+
+    @Test
+    public void testLiteral() throws Exception {
+        String str =
+                "import " + StockTick.class.getCanonicalName() + ";" +
+                     "declare StockTick @timestamp(timeFieldAsLong) end\n" +
+                     "rule R when\n" +
+                     "    $a : StockTick( timeFieldAsLong after \"01-Jan-2016\" )\n" +
+                     "then\n" +
+                     "  System.out.println(\"fired\");\n" +
+                     "end\n";
+
+        KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+
+        long time = LocalDateTime.of(2020, 1, 1, 0, 0, 0).atZone(ZoneId.of("UTC")).toInstant().getEpochSecond() * 1000;
+        ksession.insert(new StockTick("DROO").setTimeField(time));
+
+        assertEquals(1, ksession.fireAllRules());
+    }
+
+    @Test
+    public void testZonedDateTime() throws Exception {
+        String str =
+                "import " + DateTimeHolder.class.getCanonicalName() + ";" +
+                        "rule R when\n" +
+                        "    $a : DateTimeHolder(  )\n" +
+                        "    $b : DateTimeHolder( zonedDateTime after[5s,8s] $a.zonedDateTime )\n" +
+                        "then\n" +
+                        "end\n";
+
+        KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+        SessionPseudoClock clock = ksession.getSessionClock();
+
+        ksession.insert( new DateTimeHolder( ZonedDateTime.now() ) );
+        ksession.insert( new DateTimeHolder( ZonedDateTime.now().plusSeconds(6) ) );
+
+        assertEquals( 1, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testCalendarsWithCronAndStartAndEnd() throws Exception {
+        final Locale defaultLoc = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.UK); // Because of the date strings in the DRL, fixable with JBRULES-3444
+            final String str =
+                    "package org.simple \n" +
+                            "global java.util.List list \n" +
+                            "rule xxx \n" +
+                            "  date-effective \"02-Jan-2010\"\n" +
+                            "  date-expires \"06-Jan-2010\"\n" +
+                            "  calendars \"cal1\"\n" +
+                            "  timer (cron: 0 0 0 * * ?) " +
+                            "when \n" +
+                            "then \n" +
+                            "  list.add(\"fired\"); \n" +
+                            "end  \n";
+
+            KieSession ksession = getKieSession(getCepKieModuleModel(), str);
+            try {
+                final List list = new ArrayList();
+                final PseudoClockScheduler timeService = ksession.getSessionClock();
+                final Date date = convertDate("01-Jan-2010");
+
+                final Calendar cal1 = timestamp -> true;
+
+                final long oneDay = 60 * 60 * 24;
+                ksession.getCalendars().set("cal1", cal1);
+                ksession.setGlobal("list", list);
+
+                timeService.advanceTime(date.getTime(), TimeUnit.MILLISECONDS);
+                ksession.fireAllRules();
+                assertEquals(0, list.size());
+
+                timeService.advanceTime(oneDay, TimeUnit.SECONDS);
+                ksession.fireAllRules();
+                assertEquals(0, list.size());
+
+                timeService.advanceTime(oneDay, TimeUnit.SECONDS); // day 3
+                ksession.fireAllRules();
+                assertEquals(1, list.size());
+
+                timeService.advanceTime(oneDay, TimeUnit.SECONDS);
+                ksession.fireAllRules();
+                assertEquals(2, list.size());
+
+                timeService.advanceTime(oneDay, TimeUnit.SECONDS);   // day 5
+                ksession.fireAllRules();
+                assertEquals(3, list.size());
+
+                timeService.advanceTime(oneDay, TimeUnit.SECONDS);
+                ksession.fireAllRules();
+                assertEquals(3, list.size());
+            } finally {
+                ksession.dispose();
+            }
+        } finally {
+            Locale.setDefault(defaultLoc);
         }
     }
 }

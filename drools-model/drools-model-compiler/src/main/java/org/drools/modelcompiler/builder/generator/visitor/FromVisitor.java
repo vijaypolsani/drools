@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.expr.Expression;
@@ -57,6 +58,7 @@ import static org.drools.core.rule.Pattern.isCompatibleWithFromReturnType;
 import static org.drools.core.util.StringUtils.splitArgumentsList;
 import static org.drools.modelcompiler.builder.generator.DrlxParseUtil.findViaScopeWithPredicate;
 import static org.drools.modelcompiler.builder.generator.DrlxParseUtil.generateLambdaWithoutParameters;
+import static org.drools.modelcompiler.builder.generator.DrlxParseUtil.toVar;
 import static org.drools.modelcompiler.builder.generator.DslMethodNames.ENTRY_POINT_CALL;
 import static org.drools.modelcompiler.builder.generator.DslMethodNames.FROM_CALL;
 import static org.kie.internal.ruleunit.RuleUnitUtil.isLegacyRuleUnit;
@@ -96,10 +98,6 @@ public class FromVisitor {
             return fromFieldOrName(expression);
         }
 
-        if (parsedExpression instanceof MethodCallExpr ) {
-            return fromMethodExpr(expression, (MethodCallExpr) parsedExpression);
-        }
-
         if (parsedExpression instanceof ObjectCreationExpr ) {
             return fromConstructorExpr(expression, (ObjectCreationExpr) parsedExpression);
         }
@@ -110,7 +108,7 @@ public class FromVisitor {
             return of(fromCall);
         }
 
-        return Optional.empty();
+        return fromExpression(expression, parsedExpression);
     }
 
     private Optional<Expression> createEnumeratedFrom( String expressions ) {
@@ -139,7 +137,7 @@ public class FromVisitor {
         return asListCall;
     }
 
-    private Optional<Expression> fromMethodExpr(String expression, MethodCallExpr parsedExpression) {
+    private Optional<Expression> fromExpression(String expression, Expression parsedExpression) {
         return fromExpressionViaScope(expression, parsedExpression).map(Optional::of)
                 .orElseGet(() -> fromExpressionUsingArguments(expression, parsedExpression));
     }
@@ -158,7 +156,7 @@ public class FromVisitor {
 
         Expression newExpr = generateLambdaWithoutParameters( bindingIds, parsedExpression, true, Optional.empty(), context );
         if (newExpr instanceof LambdaExpr) {
-            context.getPackageModel().getLambdaReturnTypes().put((LambdaExpr)newExpr, DrlxParseUtil.getClassFromType(context.getTypeResolver(), parsedExpression.getType()));
+            context.getPackageModel().registerLambdaReturnType((LambdaExpr)newExpr, DrlxParseUtil.getClassFromType(context.getTypeResolver(), parsedExpression.getType()));
         }
         fromCall.addArgument(newExpr);
         return of( fromCall );
@@ -195,7 +193,7 @@ public class FromVisitor {
         return fromCall;
     }
 
-    private Optional<Expression> fromExpressionUsingArguments(String expression, MethodCallExpr methodCallExpr) {
+    private Optional<Expression> fromExpressionUsingArguments(String expression, Expression methodCallExpr) {
         MethodCallExpr fromCall = new MethodCallExpr(null, FROM_CALL);
         String bindingId = addFromArgument( methodCallExpr, fromCall );
 
@@ -204,23 +202,33 @@ public class FromVisitor {
                 of(addNoArgLambdaToFromExpression( expression, fromCall ));
     }
 
-    private String addFromArgument( MethodCallExpr methodCallExpr, MethodCallExpr fromCall ) {
-        String bindingId = null;
+    private String addFromArgument( Expression methodCallExpr, MethodCallExpr fromCall ) {
+        Collection<String> args = methodCallExpr
+                .findAll(NameExpr.class)
+                .stream()
+                .map(Object::toString)
+                .filter(context::hasDeclaration)
+                .distinct()
+                .collect(Collectors.toList());
 
-        for (Expression argument : methodCallExpr.getArguments()) {
-            final String argumentName = PrintUtil.printConstraint(argument);
-            if (contextHasDeclaration(argumentName)) {
-                if (bindingId == null) {
-                    bindingId = argumentName;
-                }
-                fromCall.addArgument( context.getVarExpr(argumentName));
-            }
-        }
-        return bindingId;
+        addArgumentWithPreexistingCheck(fromCall, args);
+
+        return args
+                .stream()
+                .findFirst()
+                .orElse(null);
     }
 
-    private Optional<Expression> fromExpressionViaScope(String expression, MethodCallExpr methodCallExpr) {
-        final Expression sanitizedMethodCallExpr = (Expression) DrlxParseUtil.transformDrlNameExprToNameExpr(methodCallExpr);
+    // Avoid re-add preexisting arguments
+    private void addArgumentWithPreexistingCheck(MethodCallExpr fromCall, Collection<String> args) {
+        args.stream()
+                .filter(a -> fromCall.findAll(NameExpr.class, fa -> fa.toString().equals(toVar(a))).isEmpty())
+                .map(context::getVarExpr)
+                .forEach(fromCall::addArgument);
+    }
+
+    private Optional<Expression> fromExpressionViaScope(String expression, Expression expr) {
+        final Expression sanitizedMethodCallExpr = DrlxParseUtil.transformDrlNameExprToNameExpr(expr);
         return findViaScopeWithPredicate(sanitizedMethodCallExpr, e -> {
             if (e instanceof NameExpr) {
                 return contextHasDeclaration(((NameExpr) e).getName().toString());
@@ -228,7 +236,7 @@ public class FromVisitor {
             return false;
         })
         .filter( Expression::isNameExpr )
-        .map( e -> createFromCall(expression, e.asNameExpr().toString(), true, methodCallExpr) );
+        .map( e -> createFromCall(expression, e.asNameExpr().toString(), true, expr) );
     }
 
     private boolean contextHasDeclaration(String name) {
@@ -241,17 +249,21 @@ public class FromVisitor {
         return entryPointCall;
     }
 
-    private Expression createFromCall( String expression, String bindingId, boolean hasBinding, MethodCallExpr methodCallExpr ) {
+    private Expression createFromCall( String expression, String bindingId, boolean hasBinding, Expression expr ) {
         MethodCallExpr fromCall = new MethodCallExpr(null, FROM_CALL);
         fromCall.addArgument( context.getVarExpr(bindingId));
-        if (methodCallExpr != null) {
-            addFromArgument( methodCallExpr, fromCall );
+        if (hasBinding) {
+            return addLambdaToFromExpression(expression, bindingId, fromCall);
+        } else {
+            if (expr != null) {
+                addFromArgument( expr, fromCall );
+            }
+            return fromCall;
         }
-        return hasBinding ? addLambdaToFromExpression( expression, bindingId, fromCall ) : fromCall;
     }
 
     private Expression addLambdaToFromExpression( String expression, String bindingId, MethodCallExpr fromCall ) {
-        Expression exprArg = createArg( expression, bindingId );
+        Expression exprArg = createArg( expression, bindingId, fromCall);
         if (exprArg != null) {
             fromCall.addArgument( exprArg );
         }
@@ -263,7 +275,7 @@ public class FromVisitor {
         return fromCall;
     }
 
-    private Expression createArg( String expression, String bindingId ) {
+    private Expression createArg(String expression, String bindingId, MethodCallExpr fromCall) {
         if (bindingId != null) {
             DeclarationSpec declarationSpec = context.getDeclarationById( bindingId ).orElseThrow( RuntimeException::new );
             Class<?> clazz = declarationSpec.getDeclarationClass();
@@ -272,17 +284,19 @@ public class FromVisitor {
 
             return drlxParseResult.acceptWithReturnValue( drlxParseSuccess -> {
                 SingleDrlxParseSuccess singleResult = ( SingleDrlxParseSuccess ) drlxParseResult;
-                TypedExpression left = singleResult.getLeft();
-                if ( left != null && !isCompatibleWithFromReturnType( patternType, left.getRawClass() ) ) {
+                if ( !isCompatibleWithFromReturnType( patternType, singleResult.getExprRawClass() ) ) {
                     context.addCompilationError( new InvalidExpressionErrorResult(
                             "Pattern of type: '" + patternType.getCanonicalName() + "' on rule '" + context.getRuleName() +
-                                    "' is not compatible with type " + left.getRawClass().getCanonicalName() + " returned by source" ) );
+                                    "' is not compatible with type " + singleResult.getExprRawClass().getCanonicalName() + " returned by source" ) );
                 }
                 Expression parsedExpression = drlxParseSuccess.getExpr();
                 Expression newExpr = generateLambdaWithoutParameters( singleResult.getUsedDeclarations(), parsedExpression, singleResult.isSkipThisAsParam(), ofNullable(singleResult.getPatternType()), context );
                 if (newExpr instanceof LambdaExpr) {
-                    context.getPackageModel().getLambdaReturnTypes().put((LambdaExpr)newExpr, singleResult.getExprType());
+                    context.getPackageModel().registerLambdaReturnType((LambdaExpr)newExpr, singleResult.getExprType());
                 }
+
+                addArgumentWithPreexistingCheck(fromCall, singleResult.getUsedDeclarations());
+
                 return newExpr;
             } );
         }

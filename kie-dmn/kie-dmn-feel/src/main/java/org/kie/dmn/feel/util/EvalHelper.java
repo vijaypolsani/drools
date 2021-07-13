@@ -50,6 +50,7 @@ import org.kie.dmn.feel.lang.types.BuiltInType;
 import org.kie.dmn.feel.lang.types.impl.ComparablePeriod;
 import org.kie.dmn.feel.runtime.Range;
 import org.kie.dmn.feel.runtime.Range.RangeBoundary;
+import org.kie.dmn.model.api.GwtIncompatible;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -305,7 +306,7 @@ public class EvalHelper {
 
         @Override
         public Optional<Object> toOptional() {
-            return valueResult.cata(l -> Optional.empty(), Optional::of);
+            return valueResult.cata(l -> Optional.empty(), Optional::ofNullable);
         }
 
     }
@@ -449,6 +450,7 @@ public class EvalHelper {
      * @param field
      * @return
      */
+    @GwtIncompatible
     public static Method getGenericAccessor(Class<?> clazz, String field) {
         LOG.trace( "getGenericAccessor({}, {})", clazz, field );
 
@@ -475,6 +477,7 @@ public class EvalHelper {
      * @param field
      * @return
      */
+    @GwtIncompatible
     public static Method getAccessor(Class<?> clazz, String field) {
         LOG.trace( "getAccessor({}, {})", clazz, field );
         try {
@@ -711,6 +714,9 @@ public class EvalHelper {
     }
 
     private static String removeTrailingZeros(final String stringNumber) {
+        if(stringNumber.contains("E")) {
+            return stringNumber;
+        }
         final String stringWithoutZeros = stringNumber.replaceAll("0*$", "");
         if (Character.isDigit(stringWithoutZeros.charAt(stringWithoutZeros.length() - 1))) {
             return stringWithoutZeros;

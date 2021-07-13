@@ -23,9 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
-import org.drools.core.RuleBaseConfiguration.AssertBehaviour;
 import org.drools.core.WorkingMemoryEntryPoint;
-import org.drools.core.common.ClassAwareObjectStore;
+import org.drools.core.common.IdentityObjectStore;
 import org.drools.core.common.InternalFactHandle;
 import org.drools.core.common.InternalWorkingMemory;
 import org.drools.core.common.InternalWorkingMemoryEntryPoint;
@@ -35,16 +34,15 @@ import org.drools.core.phreak.PropagationEntry;
 import org.drools.core.phreak.PropagationEntry.AbstractPropagationEntry;
 import org.drools.core.phreak.PropagationList;
 import org.drools.core.phreak.SynchronizedPropagationList;
-import org.drools.core.reteoo.EntryPointNode;
 import org.drools.core.reteoo.ObjectTypeConf;
 import org.drools.core.reteoo.ObjectTypeNode;
 import org.drools.core.spi.Activation;
 import org.drools.core.spi.FactHandleFactory;
 import org.drools.core.spi.PropagationContext;
 import org.drools.core.util.bitmask.BitMask;
+import org.drools.ruleunit.RuleUnit;
 import org.kie.api.runtime.rule.EntryPoint;
 import org.kie.api.runtime.rule.FactHandle;
-import org.drools.ruleunit.RuleUnit;
 
 import static java.util.Arrays.asList;
 
@@ -56,7 +54,7 @@ public class CursoredDataSource<T> implements InternalDataSource<T> {
 
     private InternalWorkingMemory workingMemory;
 
-    private ObjectStore objectStore = new ClassAwareObjectStore( AssertBehaviour.IDENTITY, null );
+    private ObjectStore objectStore = new IdentityObjectStore();
 
     private Map<RuleUnit.Identity, PropagationList> propagationsMap = new HashMap<>();
 
@@ -82,7 +80,7 @@ public class CursoredDataSource<T> implements InternalDataSource<T> {
     @Override
     public FactHandle getFactHandleForObject(Object object) {
     	if (objectStore != null) {
-    		return (FactHandle)((ClassAwareObjectStore)objectStore).getHandleForObject(object);
+    		return (FactHandle)objectStore.getHandleForObject(object);
     	}
     	return null;
     }
@@ -210,7 +208,7 @@ public class CursoredDataSource<T> implements InternalDataSource<T> {
         public void execute( EntryPoint entryPoint ) {
             WorkingMemoryEntryPoint ep = (WorkingMemoryEntryPoint) entryPoint;
             ObjectTypeConf typeConf = ep.getObjectTypeConfigurationRegistry()
-                                        .getObjectTypeConf( ep.getEntryPoint(), dsFactHandle.getObject() );
+                                        .getOrCreateObjectTypeConf( ep.getEntryPoint(), dsFactHandle.getObject() );
 
             InternalFactHandle handleForEp = dsFactHandle.createFactHandleFor( ep, typeConf );
             RuleUnit.Identity ruleUnitIdentity = (( RuleUnit ) ep.getRuleUnit()).getUnitIdentity();
@@ -249,7 +247,7 @@ public class CursoredDataSource<T> implements InternalDataSource<T> {
         public void execute( EntryPoint entryPoint ) {
             WorkingMemoryEntryPoint ep = (WorkingMemoryEntryPoint) entryPoint;
             ObjectTypeConf typeConf = ep.getObjectTypeConfigurationRegistry()
-                                        .getObjectTypeConf( ep.getEntryPoint(), object );
+                                        .getObjectTypeConf( object );
 
             RuleUnit.Identity ruleUnitIdentity = (( RuleUnit ) ep.getRuleUnit()).getUnitIdentity();
             InternalFactHandle handle = dsFactHandle.childHandles.get( ruleUnitIdentity );
@@ -265,7 +263,7 @@ public class CursoredDataSource<T> implements InternalDataSource<T> {
                                                                                modifiedClass,
                                                                                null);
 
-            EntryPointNode.propagateModify( handle, context, typeConf, ep.getInternalWorkingMemory() );
+            PropagationEntry.Update.execute( handle, context, typeConf, ep.getInternalWorkingMemory() );
         }
     }
 
@@ -283,7 +281,7 @@ public class CursoredDataSource<T> implements InternalDataSource<T> {
         public void execute( EntryPoint entryPoint ) {
             WorkingMemoryEntryPoint ep = (WorkingMemoryEntryPoint) entryPoint;
             ObjectTypeConf typeConf = ep.getObjectTypeConfigurationRegistry()
-                                        .getObjectTypeConf( ep.getEntryPoint(), dsFactHandle.getObject() );
+                                        .getObjectTypeConf( dsFactHandle.getObject() );
 
             RuleUnit.Identity ruleUnitIdentity = (( RuleUnit ) ep.getRuleUnit()).getUnitIdentity();
             InternalFactHandle handle = dsFactHandle.childHandles.get( ruleUnitIdentity );

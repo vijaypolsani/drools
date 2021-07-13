@@ -42,7 +42,6 @@ import org.drools.core.spi.ClassWireable;
 import org.drools.core.spi.DataProvider;
 import org.drools.core.spi.ObjectType;
 import org.drools.core.spi.PropagationContext;
-import org.drools.core.spi.Tuple;
 import org.drools.core.util.AbstractBaseLinkedListNode;
 import org.drools.core.util.bitmask.AllSetBitMask;
 import org.drools.core.util.bitmask.BitMask;
@@ -88,6 +87,8 @@ public class FromNode<T extends FromNode.FromMemory> extends LeftTupleSource
         super(id, context);
         this.dataProvider = dataProvider;
         setLeftTupleSource(tupleSource);
+        this.setObjectCount(leftInput.getObjectCount() + 1); // 'from' node increases the object count
+
         this.alphaConstraints = constraints;
         this.betaConstraints = (binder == null) ? EmptyBetaConstraints.getInstance() : binder;
         this.betaConstraints.init(context, getType());
@@ -225,19 +226,16 @@ public class FromNode<T extends FromNode.FromMemory> extends LeftTupleSource
                                         final PropagationContext context,
                                         final InternalWorkingMemory workingMemory,
                                         final Object object ) {
-        return new RightTupleImpl( createFactHandle( leftTuple, context, workingMemory, object ) );
+        return new RightTupleImpl( createFactHandle( workingMemory, object ) );
     }
 
-    public InternalFactHandle createFactHandle( Tuple leftTuple, PropagationContext context, InternalWorkingMemory workingMemory, Object object ) {
+    public InternalFactHandle createFactHandle( InternalWorkingMemory workingMemory, Object object ) {
         if ( objectTypeConf == null ) {
             // use default entry point and object class. Notice that at this point object is assignable to resultClass
             objectTypeConf = new ClassObjectTypeConf( workingMemory.getEntryPoint(), resultClass, workingMemory.getKnowledgeBase() );
         }
 
-        return workingMemory.getFactHandleFactory().newFactHandle(object,
-                                                                  objectTypeConf,
-                                                                  workingMemory,
-                                                                  null );
+        return workingMemory.getFactHandleFactory().newFactHandle(object, objectTypeConf, workingMemory, null );
     }
 
 
@@ -423,7 +421,8 @@ public class FromNode<T extends FromNode.FromMemory> extends LeftTupleSource
         return leftInput.getObjectTypeNode();
     }
 
-    public void attach( BuildContext context ) {
+    public void doAttach( BuildContext context ) {
+        super.doAttach(context);
         this.leftInput.addTupleSink( this, context );
     }
 

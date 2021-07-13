@@ -20,9 +20,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.annotation.Annotation;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,13 +36,17 @@ import org.drools.reflective.ComponentsFactory;
 import org.drools.reflective.ResourceProvider;
 import org.drools.reflective.util.ClassUtils;
 import org.kie.internal.utils.KieTypeResolver;
+import org.kie.memorycompiler.StoreClassLoader;
+import org.kie.memorycompiler.WritableClassLoader;
 
-public abstract class ProjectClassLoader extends ClassLoader implements KieTypeResolver {
+public abstract class ProjectClassLoader extends ClassLoader implements KieTypeResolver, StoreClassLoader, WritableClassLoader {
 
     private static final boolean CACHE_NON_EXISTING_CLASSES = true;
     private static final ClassNotFoundException dummyCFNE = CACHE_NON_EXISTING_CLASSES ?
                                                             new ClassNotFoundException("This is just a cached Exception. Disable non existing classes cache to see the actual one.") :
                                                             null;
+
+    private static boolean enableStoreFirst = Boolean.valueOf(System.getProperty("drools.projectClassLoader.enableStoreFirst", "true"));
 
     static {
         registerAsParallelCapable();
@@ -55,6 +63,8 @@ public abstract class ProjectClassLoader extends ClassLoader implements KieTypeR
     private InternalTypesClassLoader typesClassLoader;
 
     private final Map<String, Class<?>> loadedClasses = new ConcurrentHashMap<String, Class<?>>();
+
+    protected Set<String> generatedClassNames = new HashSet<>();
 
     private ResourceProvider resourceProvider;
 
@@ -109,19 +119,43 @@ public abstract class ProjectClassLoader extends ClassLoader implements KieTypeR
         return projectClassLoader;
     }
 
+    public abstract boolean isDynamic();
+
     @Override
     protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
         Class<?> cls = loadedClasses.get(name);
         if (cls != null) {
             return cls;
         }
-        try {
-            cls = internalLoadClass(name, resolve);
-        } catch (ClassNotFoundException e2) {
-            cls = loadType(name, resolve);
+
+        if (isStoreFirst(name)) {
+            Class<?> clazz = findLoadedClass(name); // skip parent classloader
+            if (clazz != null) {
+                return clazz;
+            }
+            if (typesClassLoader != null) {
+                clazz = typesClassLoader.findLoadedClassWithoutParent(name);
+                if (clazz != null) {
+                    return clazz;
+                }
+            }
+            // if generated class, go straight to defineType
+            cls = tryDefineType(name, null);
+        } else {
+            try {
+                cls = internalLoadClass(name, resolve);
+            } catch (ClassNotFoundException e2) {
+                // for stored classes which are not in generatedClassNames
+                cls = loadType(name, resolve);
+            }
         }
+
         loadedClasses.put(name, cls);
         return cls;
+    }
+
+    protected boolean isStoreFirst(String name) {
+        return false;
     }
 
     // This method has to be public because is also used by the android ClassLoader
@@ -138,7 +172,14 @@ public abstract class ProjectClassLoader extends ClassLoader implements KieTypeR
         try {
             return super.loadClass(name, resolve);
         } catch (ClassNotFoundException e) {
-            return Class.forName(name, resolve, getParent());
+            try {
+                return Class.forName(name, resolve, getParent());
+            } catch (ClassNotFoundException e1) {
+                if (CACHE_NON_EXISTING_CLASSES) {
+                    nonExistingClasses.add(name);
+                }
+                throw e1;
+            }
         }
     }
 
@@ -183,6 +224,11 @@ public abstract class ProjectClassLoader extends ClassLoader implements KieTypeR
         definedTypes.put(name, new ClassBytecode(clazz, bytecode));
         loadedClasses.put(name, clazz);
         return clazz;
+    }
+
+    @Override
+    public Class<?> writeClass( String name, byte[] bytecode ) {
+        return defineClass( name, bytecode, 0, bytecode.length );
     }
 
     public Class<?> defineClass(String name, byte[] bytecode) {
@@ -289,6 +335,23 @@ public abstract class ProjectClassLoader extends ClassLoader implements KieTypeR
         return resources;
     }
 
+    public Set<String> getGeneratedClassNames() {
+        return generatedClassNames;
+    }
+
+    public void setGeneratedClassNames(Set<String> generatedClassNames) {
+        this.generatedClassNames = generatedClassNames;
+    }
+
+    public static boolean isEnableStoreFirst() {
+        return enableStoreFirst;
+    }
+
+    // test purpose
+    static void setEnableStoreFirst(boolean enableStoreFirst) {
+        ProjectClassLoader.enableStoreFirst = enableStoreFirst;
+    }
+
     private static class ResourcesEnum implements Enumeration<URL> {
 
         private URL providedResource;
@@ -319,8 +382,15 @@ public abstract class ProjectClassLoader extends ClassLoader implements KieTypeR
         return store == null ? null : store.get(resourceName);
     }
 
+    @Override
     public Map<String, byte[]> getStore() {
         return store;
+    }
+
+    public void clearStore() {
+        if (store != null) {
+            store.clear();
+        }
     }
 
     public void setDroolsClassLoader(ClassLoader droolsClassLoader) {
@@ -372,55 +442,24 @@ public abstract class ProjectClassLoader extends ClassLoader implements KieTypeR
 
     public abstract InternalTypesClassLoader makeClassLoader();
 
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) {
-            return true;
-        }
-        if (!(o instanceof ProjectClassLoader)) {
-            return false;
-        }
-
-        ProjectClassLoader that = (ProjectClassLoader) o;
-
-        if (droolsClassLoader != null ? !droolsClassLoader.equals(
-                                                                  that.droolsClassLoader) : that.droolsClassLoader != null) {
-            return false;
-        }
-        if (typesClassLoader != null ? !typesClassLoader.equals(
-                                                                that.typesClassLoader) : that.typesClassLoader != null) {
-            return false;
-        }
-        if (getParent() != null ? !getParent().equals(
-                                                      that.getParent()) : that.getParent() != null) {
-            return false;
-        }
-        return resourceProvider != null ? resourceProvider.equals(
-                that.resourceProvider) : that.resourceProvider == null;
-    }
-
-    @Override
-    public int hashCode() {
-        int result =
-                droolsClassLoader != null ? droolsClassLoader.hashCode() : 0;
-        result = 31 * result + (typesClassLoader != null ? typesClassLoader.hashCode() : 0);
-        result = 31 * result + (resourceProvider != null ? resourceProvider.hashCode() : 0);
-        result = 31 * result + (getParent() != null ? getParent().hashCode() : 0);
-        return result;
-    }
-
     public interface InternalTypesClassLoader extends KieTypeResolver {
         Class<?> defineClass( String name, byte[] bytecode );
         Class<?> loadType( String name, boolean resolve ) throws ClassNotFoundException;
+        default Class<?> findLoadedClassWithoutParent(String name) {
+            throw new UnsupportedOperationException();
+        };
     }
 
-    public synchronized void reinitTypes() {
+    public synchronized List<String> reinitTypes() {
         typesClassLoader = null;
         nonExistingClasses.clear();
         loadedClasses.clear();
         if (definedTypes != null) {
+            List<String> removedTypes = new ArrayList<>(definedTypes.keySet());
             definedTypes.clear();
+            return removedTypes;
         }
+        return Collections.emptyList();
     }
 
     private static class ClassBytecode {

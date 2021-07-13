@@ -19,10 +19,11 @@ package org.drools.modelcompiler.builder.generator.declaredtype;
 
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.TypeDeclaration;
@@ -33,6 +34,7 @@ import org.drools.compiler.lang.descr.AnnotationDescr;
 import org.drools.compiler.lang.descr.EnumDeclarationDescr;
 import org.drools.compiler.lang.descr.PackageDescr;
 import org.drools.compiler.lang.descr.TypeDeclarationDescr;
+import org.drools.compiler.rule.builder.ConstraintBuilder;
 import org.drools.core.addon.TypeResolver;
 import org.drools.core.definitions.InternalKnowledgePackage;
 import org.drools.core.factmodel.AccessibleFact;
@@ -40,10 +42,11 @@ import org.drools.core.factmodel.GeneratedFact;
 import org.drools.modelcompiler.builder.GeneratedClassWithPackage;
 import org.drools.modelcompiler.builder.ModelBuilderImpl;
 import org.drools.modelcompiler.builder.PackageModel;
+import org.drools.modelcompiler.builder.errors.DuplicatedDeclarationError;
 import org.drools.modelcompiler.builder.errors.InvalidExpressionErrorResult;
 import org.drools.modelcompiler.builder.generator.declaredtype.generator.GeneratedClassDeclaration;
-import org.drools.modelcompiler.util.MvelUtil;
 
+import static org.drools.core.util.Drools.hasMvel;
 import static org.drools.modelcompiler.builder.JavaParserCompiler.compileAll;
 import static org.drools.modelcompiler.builder.generator.DslMethodNames.ADD_ANNOTATION_CALL;
 import static org.drools.modelcompiler.builder.generator.DslMethodNames.ANNOTATION_VALUE_CALL;
@@ -75,9 +78,15 @@ public class POJOGenerator {
 
     public void findPOJOorGenerate() {
         TypeResolver typeResolver = pkg.getTypeResolver();
+        Set<String> generatedPojos = new HashSet<>();
         for (TypeDeclarationDescr typeDescr : packageDescr.getTypeDeclarations()) {
+            if (!generatedPojos.add(typeDescr.getFullTypeName())) {
+                builder.addBuilderResult( new DuplicatedDeclarationError(typeDescr.getFullTypeName()) );
+                continue;
+            }
             try {
                 Class<?> type = typeResolver.resolveType(typeDescr.getFullTypeName());
+                checkRedeclarationCompatibility(type, typeDescr);
                 processTypeMetadata(type, typeDescr.getAnnotations());
             } catch (ClassNotFoundException e) {
                 createPOJO(typeDescr);
@@ -132,6 +141,12 @@ public class POJOGenerator {
         packageModel.addTypeMetaDataExpressions(registerTypeMetaData(pkg.getName() + "." + typeName));
     }
 
+    private void checkRedeclarationCompatibility(Class<?> type, TypeDeclarationDescr typeDescr) {
+        if (!typeDescr.getFields().isEmpty() && type.getDeclaredFields().length != typeDescr.getFields().size()) {
+            builder.addBuilderResult( new InvalidExpressionErrorResult("Wrong redeclaration of type " + typeDescr.getFullTypeName()) );
+        }
+    }
+
     private void processTypeMetadata(Class<?> type, Collection<AnnotationDescr> annotations) {
         MethodCallExpr typeMetaDataCall = registerTypeMetaData(type.getCanonicalName());
 
@@ -142,7 +157,7 @@ public class POJOGenerator {
                 MethodCallExpr annotationValueCall = new MethodCallExpr(null, ANNOTATION_VALUE_CALL);
                 annotationValueCall.addArgument(new StringLiteralExpr(entry.getKey()));
                 String expr = entry.getValue().toString();
-                if (exprAnnotations.contains(ann.getName()) && MvelUtil.analyzeExpression(type, expr) == null) {
+                if (hasMvel() && exprAnnotations.contains(ann.getName()) && ConstraintBuilder.get().analyzeExpression(type, expr) == null) {
                     builder.addBuilderResult(new InvalidExpressionErrorResult("Unable to analyze expression '" + expr + "' for " + ann.getName() + " attribute"));
                 }
                 annotationValueCall.addArgument(quote(expr));

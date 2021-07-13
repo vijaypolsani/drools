@@ -22,6 +22,9 @@ import java.util.stream.Collectors;
 
 import org.drools.compiler.kie.builder.impl.DrlProject;
 import org.drools.compiler.kie.builder.impl.InternalKieModule;
+import org.drools.core.impl.InternalKnowledgeBase;
+import org.drools.core.reteoo.EntryPointNode;
+import org.drools.core.reteoo.ObjectTypeNode;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
@@ -34,49 +37,50 @@ import org.kie.api.builder.model.KieModuleModel;
 import org.kie.api.runtime.ClassObjectFilter;
 import org.kie.api.runtime.KieContainer;
 import org.kie.api.runtime.KieSession;
+import org.kie.internal.builder.conf.AlphaNetworkCompilerOption;
 
 import static java.util.Arrays.asList;
-import static org.drools.modelcompiler.BaseModelTest.RUN_TYPE.FLOW_DSL;
-import static org.drools.modelcompiler.BaseModelTest.RUN_TYPE.FLOW_WITH_ALPHA_NETWORK;
+
 import static org.drools.modelcompiler.BaseModelTest.RUN_TYPE.PATTERN_DSL;
 import static org.drools.modelcompiler.BaseModelTest.RUN_TYPE.PATTERN_WITH_ALPHA_NETWORK;
 import static org.drools.modelcompiler.BaseModelTest.RUN_TYPE.STANDARD_WITH_ALPHA_NETWORK;
-import static org.junit.Assert.*;
+import static org.junit.Assert.fail;
 
 @RunWith(Parameterized.class)
 public abstract class BaseModelTest {
     public enum RUN_TYPE {
-        FLOW_DSL( false ),
-        PATTERN_DSL( false ),
-        STANDARD_FROM_DRL( false ),
-        STANDARD_WITH_ALPHA_NETWORK( true ),
-        PATTERN_WITH_ALPHA_NETWORK( true ),
-        FLOW_WITH_ALPHA_NETWORK( true );
+        PATTERN_DSL( true, false ),
+        STANDARD_FROM_DRL( false, false ),
+        STANDARD_WITH_ALPHA_NETWORK( false, true ),
+        PATTERN_WITH_ALPHA_NETWORK( true, true );
 
+        private boolean executableModel;
         private boolean alphaNetworkCompiler;
 
-        RUN_TYPE( boolean isAlphaNetworkCompiler ) {
+        RUN_TYPE( boolean executableModel, boolean isAlphaNetworkCompiler ) {
+            this.executableModel = executableModel;
             this.alphaNetworkCompiler = isAlphaNetworkCompiler;
         }
 
         public boolean isAlphaNetworkCompiler() {
             return alphaNetworkCompiler;
         }
+
+        public boolean isExecutableModel() {
+            return executableModel;
+        }
     }
 
     final static Object[] PLAIN = {
             RUN_TYPE.STANDARD_FROM_DRL,
-            FLOW_DSL,
             PATTERN_DSL,
     };
 
     final static Object[] WITH_ALPHA_NETWORK = {
             RUN_TYPE.STANDARD_FROM_DRL,
-            FLOW_DSL,
             PATTERN_DSL,
             STANDARD_WITH_ALPHA_NETWORK,
             PATTERN_WITH_ALPHA_NETWORK,
-            FLOW_WITH_ALPHA_NETWORK,
     };
 
 
@@ -96,8 +100,8 @@ public abstract class BaseModelTest {
     }
 
     protected KieSession getKieSession(String... rules) {
-        KieModuleModel kproj = testRunType.isAlphaNetworkCompiler() ? getKieModuleModelWithAlphaNetworkCompiler() : null;
-        return getKieSession(kproj, rules);
+        KieModuleModel model = testRunType.isAlphaNetworkCompiler() ? getKieModuleModelWithAlphaNetworkCompiler() : null;
+        return getKieSession(model, rules);
     }
 
     protected KieSession getKieSession(KieModuleModel model, String... stringRules) {
@@ -139,9 +143,7 @@ public abstract class BaseModelTest {
         }
 
         KieBuilder kieBuilder;
-        if (asList(FLOW_DSL, FLOW_WITH_ALPHA_NETWORK).contains(testRunType)) {
-            kieBuilder = ks.newKieBuilder(kfs).buildAll(ExecutableModelFlowProject.class);
-        } else if (asList(PATTERN_DSL, PATTERN_WITH_ALPHA_NETWORK).contains(testRunType)) {
+        if (asList(PATTERN_DSL, PATTERN_WITH_ALPHA_NETWORK).contains(testRunType)) {
             kieBuilder = ks.newKieBuilder(kfs).buildAll(ExecutableModelProject.class);
         } else {
             kieBuilder = ks.newKieBuilder(kfs).buildAll(DrlProject.class);
@@ -158,9 +160,9 @@ public abstract class BaseModelTest {
     }
 
     protected KieModuleModel getDefaultKieModuleModel( KieServices ks ) {
-        KieModuleModel kproj = ks.newKieModuleModel();
-        kproj.newKieBaseModel( "kbase" ).setDefault( true ).newKieSessionModel( "ksession" ).setDefault( true );
-        return kproj;
+        KieModuleModel model = ks.newKieModuleModel();
+        model.newKieBaseModel( "kbase" ).setDefault( true ).newKieSessionModel( "ksession" ).setDefault( true );
+        return model;
     }
 
     public static <T> List<T> getObjectsIntoList(KieSession ksession, Class<T> clazz) {
@@ -209,8 +211,18 @@ public abstract class BaseModelTest {
     }
 
     private KieModuleModel getKieModuleModelWithAlphaNetworkCompiler() {
-        KieModuleModel kproj = KieServices.get().newKieModuleModel();
-        kproj.setConfigurationProperty( org.drools.compiler.kie.builder.impl.KieContainerImpl.ALPHA_NETWORK_COMPILER_OPTION, "true" );
-        return kproj;
+        KieModuleModel model = KieServices.get().newKieModuleModel();
+        model.setConfigurationProperty(AlphaNetworkCompilerOption.PROPERTY_NAME, AlphaNetworkCompilerOption.INMEMORY.toString());
+        return model;
+    }
+
+    protected ObjectTypeNode getObjectTypeNodeForClass( KieSession ksession, Class<?> clazz ) {
+        EntryPointNode epn = (( InternalKnowledgeBase ) ksession.getKieBase()).getRete().getEntryPointNodes().values().iterator().next();
+        for (ObjectTypeNode otn : epn.getObjectTypeNodes().values()) {
+            if (otn.getObjectType().isAssignableFrom( clazz )) {
+                return otn;
+            }
+        }
+        return null;
     }
 }

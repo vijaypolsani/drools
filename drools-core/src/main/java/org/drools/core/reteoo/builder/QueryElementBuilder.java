@@ -16,6 +16,7 @@
 
 package org.drools.core.reteoo.builder;
 
+import org.drools.core.rule.Pattern;
 import org.drools.core.rule.QueryElement;
 import org.drools.core.rule.RuleConditionElement;
 
@@ -33,13 +34,12 @@ public class QueryElementBuilder
 
         final QueryElement qe = (QueryElement) rce;
         context.pushRuleComponent( qe );
-        
-        final int currentOffset = context.getCurrentPatternOffset();
-        
-        qe.getResultPattern().setOffset( currentOffset );
-        
-        utils.checkUnboundDeclarations( context,
-                                        qe.getRequiredDeclarations() );
+
+        Pattern   resultPattern = qe.getResultPattern();
+        final int tupleIndex    = context.getTupleSource() == null ? 0 : context.getTupleSource().getPathIndex() + 1;
+
+        resultPattern.setTupleIndex(tupleIndex);
+        resultPattern.setObjectIndex((context.getTupleSource() != null) ? context.getTupleSource().getObjectCount() : 0);
 
         context.setTupleSource( utils.attachNode( context,
                                                   context.getComponentFactory().getNodeFactoryService().buildQueryElementNode(
@@ -49,8 +49,8 @@ public class QueryElementBuilder
                                                                         context.isTupleMemoryEnabled(),
                                                                         qe.isOpenQuery(),
                                                                         context ) ) );
+        
         context.popRuleComponent();
-        context.incrementCurrentPatternOffset();
     }
 
     /**

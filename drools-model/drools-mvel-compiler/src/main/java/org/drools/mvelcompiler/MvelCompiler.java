@@ -1,15 +1,28 @@
+/*
+ * Copyright 2021 Red Hat, Inc. and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.drools.mvelcompiler;
 
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
-import com.github.javaparser.ast.NodeList;
+import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.stmt.BlockStmt;
-import com.github.javaparser.ast.stmt.IfStmt;
 import com.github.javaparser.ast.stmt.Statement;
 import org.drools.mvel.parser.MvelParser;
 import org.drools.mvel.parser.ast.expr.ModifyStatement;
@@ -17,26 +30,27 @@ import org.drools.mvel.parser.ast.expr.WithStatement;
 import org.drools.mvelcompiler.ast.TypedExpression;
 import org.drools.mvelcompiler.context.MvelCompilerContext;
 
-import static java.util.Optional.of;
-import static java.util.Optional.ofNullable;
 import static java.util.stream.Collectors.toList;
 
 public class MvelCompiler {
 
-    private final MvelCompilerContext mvelCompilerContext;
     private final PreprocessPhase preprocessPhase = new PreprocessPhase();
+    private final StatementVisitor statementVisitor;
+    private MvelCompilerContext mvelCompilerContext;
 
     public MvelCompiler(MvelCompilerContext mvelCompilerContext) {
+        this.statementVisitor = new StatementVisitor(mvelCompilerContext);
         this.mvelCompilerContext = mvelCompilerContext;
     }
 
-    public ParsingResult compile(String mvelBlock) {
+    public CompiledBlockResult compileStatement(String mvelBlock) {
 
         BlockStmt mvelExpression = MvelParser.parseBlock(mvelBlock);
 
         preprocessPhase.removeEmptyStmt(mvelExpression);
 
         Set<String> allUsedBindings = new HashSet<>();
+
         List<String> modifyUsedBindings = mvelExpression.findAll(ModifyStatement.class)
                 .stream()
                 .flatMap(this::transformStatementWithPreprocessing)
@@ -50,50 +64,25 @@ public class MvelCompiler {
         allUsedBindings.addAll(modifyUsedBindings);
         allUsedBindings.addAll(withUsedBindings);
 
-        List<Statement> statements = new ArrayList<>();
-        for (Statement s : mvelExpression.getStatements()) {
-            processWithMvelCompiler(statements, s);
+        // Entry point of the compiler
+        TypedExpression compiledRoot = mvelExpression.accept(statementVisitor, null);
+        allUsedBindings.addAll(mvelCompilerContext.getUsedBindings());
+
+        Node javaRoot = compiledRoot.toJavaExpression();
+
+        if(!(javaRoot instanceof BlockStmt)) {
+            throw new MvelCompilerException("With a BlockStmt as a input I was expecting a BlockStmt output");
         }
 
-        return new ParsingResult(statements)
+        BlockStmt compiledBlockStatement = (BlockStmt) javaRoot;
+        return new CompiledBlockResult(compiledBlockStatement.getStatements())
                 .setUsedBindings(allUsedBindings);
     }
 
     private Stream<String> transformStatementWithPreprocessing(Statement s) {
         PreprocessPhase.PreprocessPhaseResult invoke = preprocessPhase.invoke(s);
-        s.getParentNode().ifPresent(p -> {
-            BlockStmt parentBlockStmt = (BlockStmt) p;
-            parentBlockStmt.getStatements().addAll(0, invoke.getNewObjectStatements());
-            parentBlockStmt.getStatements().addAll(invoke.getOtherStatements());
-        });
         s.remove();
         return invoke.getUsedBindings().stream();
     }
 
-    private void processWithMvelCompiler(List<Statement> statements, Statement s) {
-        if (s.isBlockStmt()) {
-            BlockStmt body = s.asBlockStmt();
-            for (Statement children : body.getStatements()) {
-                processWithMvelCompiler(statements, children);
-            }
-        } else if (s instanceof IfStmt) {
-            IfStmt ifStmt = s.asIfStmt();
-            NodeList<Statement> thenStmts = NodeList.nodeList();
-            processWithMvelCompiler(thenStmts, ifStmt.getThenStmt());
-
-            NodeList<Statement> elseStmts = NodeList.nodeList();
-            ifStmt.getElseStmt().ifPresent(elseStmt -> processWithMvelCompiler(elseStmts, elseStmt));
-
-            statements.add(new IfStmt(ifStmt.getCondition(), new BlockStmt(thenStmts), new BlockStmt(elseStmts)));
-
-        } else {
-            TypedExpression rhs = new RHSPhase(mvelCompilerContext).invoke(s);
-            TypedExpression lhs = new LHSPhase(mvelCompilerContext, ofNullable(rhs)).invoke(s);
-
-            Optional<TypedExpression> postProcessedRHS = new ReProcessRHSPhase().invoke(rhs, lhs);
-            TypedExpression postProcessedLHS = postProcessedRHS.map(ppr -> new LHSPhase(mvelCompilerContext, of(ppr)).invoke(s)).orElse(lhs);
-
-            statements.add((Statement) postProcessedLHS.toJavaExpression());
-        }
-    }
 }

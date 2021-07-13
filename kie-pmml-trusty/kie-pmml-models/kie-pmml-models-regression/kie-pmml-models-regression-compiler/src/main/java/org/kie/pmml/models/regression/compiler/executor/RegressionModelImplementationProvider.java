@@ -26,9 +26,10 @@ import org.dmg.pmml.MiningFunction;
 import org.dmg.pmml.OpType;
 import org.dmg.pmml.TransformationDictionary;
 import org.dmg.pmml.regression.RegressionModel;
-import org.kie.pmml.commons.exceptions.KiePMMLException;
-import org.kie.pmml.commons.model.enums.OP_TYPE;
-import org.kie.pmml.commons.model.enums.PMML_MODEL;
+import org.kie.pmml.api.enums.OP_TYPE;
+import org.kie.pmml.api.enums.PMML_MODEL;
+import org.kie.pmml.api.exceptions.KiePMMLException;
+import org.kie.pmml.commons.model.HasClassLoader;
 import org.kie.pmml.commons.model.tuples.KiePMMLNameOpType;
 import org.kie.pmml.compiler.api.provider.ModelImplementationProvider;
 import org.kie.pmml.models.regression.compiler.factories.KiePMMLRegressionModelFactory;
@@ -55,24 +56,32 @@ public class RegressionModelImplementationProvider implements ModelImplementatio
     }
 
     @Override
-    public KiePMMLRegressionModel getKiePMMLModel(final DataDictionary dataDictionary, final TransformationDictionary transformationDictionary, final RegressionModel model, final Object kBuilder) {
-        logger.trace("getKiePMMLModel {} {} {}", dataDictionary, model, kBuilder);
+    public KiePMMLRegressionModel getKiePMMLModel(final String packageName,
+                                                  final DataDictionary dataDictionary,
+                                                  final TransformationDictionary transformationDictionary,
+                                                  final RegressionModel model,
+                                                  final HasClassLoader hasClassloader) {
+        logger.trace("getKiePMMLModel {} {} {} {}", packageName, dataDictionary, model, hasClassloader);
         validate(dataDictionary, model);
         try {
-            return KiePMMLRegressionModelFactory.getKiePMMLRegressionModelClasses(dataDictionary, transformationDictionary, model);
+            return KiePMMLRegressionModelFactory.getKiePMMLRegressionModelClasses(dataDictionary, transformationDictionary, model, packageName, hasClassloader);
         } catch (IOException | IllegalAccessException | InstantiationException e) {
             throw new KiePMMLException(e.getMessage(), e);
         }
     }
 
     @Override
-    public KiePMMLRegressionModel getKiePMMLModelFromPlugin(final String packageName, final DataDictionary dataDictionary, final TransformationDictionary transformationDictionary, final RegressionModel model, final Object kBuilder) {
-        logger.trace("getKiePMMLModelFromPlugin {} {} {}", dataDictionary, model, kBuilder);
+    public KiePMMLRegressionModel getKiePMMLModelWithSources(final String packageName,
+                                                             final DataDictionary dataDictionary,
+                                                             final TransformationDictionary transformationDictionary,
+                                                             final RegressionModel model,
+                                                             final HasClassLoader hasClassloader) {
+        logger.trace("getKiePMMLModelWithSources {} {} {} {}", packageName, dataDictionary, model, hasClassloader);
         try {
             final Map<String, String> sourcesMap = KiePMMLRegressionModelFactory.getKiePMMLRegressionModelSourcesMap(dataDictionary, transformationDictionary, model, packageName);
             return new KiePMMLRegressionModelWithSources(model.getModelName(), packageName, sourcesMap);
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new KiePMMLException(e);
         }
     }
 
@@ -88,12 +97,16 @@ public class RegressionModelImplementationProvider implements ModelImplementatio
         }
     }
 
-    private void validateRegression(final List<KiePMMLNameOpType> targetFields, final RegressionModel toValidate) {
+    void validateRegression(final List<KiePMMLNameOpType> targetFields, final RegressionModel toValidate) {
         validateRegressionTargetField(targetFields, toValidate);
         if (toValidate.getRegressionTables().size() != 1) {
             throw new KiePMMLException("Expected one RegressionTable, retrieved " + toValidate.getRegressionTables().size());
         }
-        switch (toValidate.getNormalizationMethod()) {
+        validateNormalizationMethod(toValidate.getNormalizationMethod());
+    }
+
+    void validateNormalizationMethod(RegressionModel.NormalizationMethod toValidate) {
+        switch (toValidate) {
             case NONE:
             case SOFTMAX:
             case LOGIT:
@@ -104,7 +117,7 @@ public class RegressionModelImplementationProvider implements ModelImplementatio
             case CAUCHIT:
                 return;
             default:
-                throw new KiePMMLException(INVALID_NORMALIZATION_METHOD + toValidate.getNormalizationMethod());
+                throw new KiePMMLException(INVALID_NORMALIZATION_METHOD + toValidate);
         }
     }
 

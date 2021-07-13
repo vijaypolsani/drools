@@ -29,7 +29,6 @@ import org.drools.core.spi.FieldValue;
 import org.drools.core.spi.InternalReadAccessor;
 import org.drools.core.time.Interval;
 
-import static org.drools.core.base.mvel.MVELCompilationUnit.getFactHandle;
 import static org.drools.core.common.InternalFactHandle.dummyFactHandleOf;
 
 /**
@@ -213,9 +212,20 @@ public class EvaluatorWrapper
     }
 
     public void loadHandles(InternalFactHandle[] handles, InternalFactHandle rightHandle) {
-        InternalFactHandle localLeftHandle = selfLeft ? null : getFactHandle(leftBinding, handles);
+        InternalFactHandle localLeftHandle = null;
+        InternalFactHandle localRightHandle = null;
 
-        InternalFactHandle localRightHandle = selfRight ? rightHandle : getFactHandle(rightBinding, handles);
+        if ( !selfLeft && handles != null) {
+            localLeftHandle = getFactHandle(leftBinding, handles);
+        }
+
+        if (selfRight) {
+            localRightHandle = rightHandle;
+        } else if (handles != null){
+            localRightHandle = getFactHandle(rightBinding, handles);
+        } // @FIXME else? what happens now (mdp) ? Maybe this can never happen?
+
+
         this.rightLiteral = localRightHandle == null;
 
         if (isTemporal()) {
@@ -243,5 +253,10 @@ public class EvaluatorWrapper
 
     public void setBindingName( String bindingName ) {
         this.bindingName = bindingName;
+    }
+
+    private static InternalFactHandle getFactHandle( Declaration declaration,
+                                                    InternalFactHandle[] handles ) {
+        return handles[declaration.getObjectIndex()];
     }
 }

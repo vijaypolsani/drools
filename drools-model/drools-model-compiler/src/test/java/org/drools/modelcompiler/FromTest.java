@@ -16,16 +16,30 @@
 
 package org.drools.modelcompiler;
 
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.assertj.core.api.Assertions;
 import org.drools.modelcompiler.FunctionsTest.Pojo;
-import org.drools.modelcompiler.domain.*;
+import org.drools.modelcompiler.domain.Address;
+import org.drools.modelcompiler.domain.Adult;
+import org.drools.modelcompiler.domain.Child;
+import org.drools.modelcompiler.domain.Man;
+import org.drools.modelcompiler.domain.Person;
+import org.drools.modelcompiler.domain.Pet;
+import org.drools.modelcompiler.domain.PetPerson;
+import org.drools.modelcompiler.domain.Toy;
+import org.drools.modelcompiler.domain.ToysStore;
+import org.drools.modelcompiler.domain.Woman;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.kie.api.runtime.KieSession;
 
@@ -126,6 +140,37 @@ public class FromTest extends BaseModelTest {
         ksession.fireAllRules();
 
         Assertions.assertThat(list).containsExactlyInAnyOrder("Charles");
+    }
+
+    @Test @Ignore
+    public void testModifyWithFrom() {
+        // DROOLS-6486
+        final String str =
+                "import org.drools.modelcompiler.domain.*;\n" +
+                "\n" +
+                "rule R when\n" +
+                " Man( $wife : wife )\n" +
+                " $child: Child( age > 10 ) from $wife.children\n" +
+                "then\n" +
+                "  modify( $child ) { setName($child.getName() + \"x\") };\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( str );
+
+        final Woman alice = new Woman( "Alice", 38 );
+        final Man bob = new Man( "Bob", 40 );
+        bob.setWife( alice );
+
+        final Child charlie = new Child( "Charles", 12 );
+        final Child debbie = new Child( "Debbie", 10 );
+        alice.addChild( charlie );
+        alice.addChild( debbie );
+
+        ksession.insert( bob );
+        ksession.insert( charlie ); // object has to be in the session in order to be modified, but it's retrieved with a FromNode
+        ksession.fireAllRules();
+
+        assertEquals("Charlesx", charlie.getName());
     }
 
     public static Integer getLength(String ignoredParameter, String s, Integer offset) {
@@ -583,7 +628,7 @@ public class FromTest extends BaseModelTest {
     }
 
     @Test
-    public void TestFromOr() {
+    public void testFromOr() {
         String str =
                 "package org.drools.compiler.test  \n" +
                      "import " + Person.class.getCanonicalName() + "\n" +
@@ -625,5 +670,390 @@ public class FromTest extends BaseModelTest {
         ksession.fireAllRules();
 
         Assertions.assertThat(list).contains("Toystore1");
+    }
+
+    public static class Measurement {
+        private String id;
+        private String val;
+
+        public Measurement(String id, String val) {
+            this.id = id;
+            this.val = val;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        public void setId(String id) {
+            this.id = id;
+        }
+
+        public String getVal() {
+            return val;
+        }
+
+        public void setVal(String val) {
+            this.val = val;
+        }
+
+        public List<String> getListOfCodes() {
+            return Arrays.asList("a", "b", "c");
+        }
+
+        public Object getSomethingBy(Object o) {
+            return o;
+        }
+     }
+
+    @Test
+    public void testFromFunctionCall() {
+        // DROOLS-5548
+        String str =
+                "package com.sample;" +
+                        "global java.util.Set controlSet;\n" +
+                        "import " + Measurement.class.getCanonicalName() + ";\n" +
+                        "" +
+                        "declare A\n" +
+                        " x: String\n" +
+                        "end\n" +
+                        "" +
+                        "declare B\n" +
+                        " a: A\n" +
+                        "end\n" +
+                        "" +
+                        "function String dummyFunction(A b) {\n" +
+                        " return \"test\";\n" +
+                        "}\n" +
+                        "\n" +
+                        "rule \"insertB\"\n" +
+                        "when\n" +
+                        "then\n" +
+                        "drools.insert(new B(new A()));" +
+                        "end;" +
+                        "rule \"will execute per each Measurement having ID color\"\n" +
+                        "no-loop\n" +
+                        "when\n" +
+                        " Measurement( id == \"color\", $colorVal : val )\n" +
+                        " $b: B()\n" +
+                        " $val: String() from dummyFunction($b.a)\n" +
+                        "then\n" +
+                        " controlSet.add($colorVal);\n" +
+                        "end";
+
+        KieSession ksession = getKieSession( str );
+
+        HashSet<Object> hashSet = new HashSet<>();
+        ksession.setGlobal("controlSet", hashSet);
+
+        ksession.insert(new Measurement("color", "red"));
+
+        int ruleFired = ksession.fireAllRules();
+
+        assertEquals( 2, ruleFired );
+        assertEquals( "red", hashSet.iterator().next() );
+    }
+
+    @Test
+    public void testFromMap() {
+        // DROOLS-5549
+        String str =
+                "package com.sample;" +
+                        "global java.util.Set controlSet;\n" +
+                        "import " + Measurement.class.getCanonicalName() + ";\n" +
+                        "import " + Collections.class.getCanonicalName() + ";\n" +
+                        "import " + Map.class.getCanonicalName() + ";\n" +
+                        "" +
+                        "function String dummyFunction(Map m) {\n" +
+                        " return \"test\";\n" +
+                        "}" +
+                        "\n" +
+                        "rule \"will execute per each Measurement having ID color\"\n" +
+                        "no-loop\n" +
+                        "when\n" +
+                        " Measurement( id == \"color\", $colorVal : val )\n" +
+                        " $val: String() from dummyFunction(Collections.singletonMap($colorVal, \"something\"))\n" +
+                        "then\n" +
+                        " controlSet.add($colorVal);\n" +
+                        "end";
+
+        KieSession ksession = getKieSession( str );
+
+        HashSet<Object> hashSet = new HashSet<>();
+        ksession.setGlobal("controlSet", hashSet);
+
+        ksession.insert(new Measurement("color", "red"));
+
+        int ruleFired = ksession.fireAllRules();
+
+        assertEquals( 1, ruleFired );
+        assertEquals( "red", hashSet.iterator().next() );
+    }
+
+    @Test
+    public void testFromChainedCall() {
+        // DROOLS-5608
+        String str =
+                "package com.sample;" +
+                        "global java.util.Set controlSet;\n" +
+                        "import " + Measurement.class.getCanonicalName() + ";\n" +
+                        "import " + Optional.class.getCanonicalName() + ";\n" +
+                        "import java.util.*;\n" +
+                        "" +
+                        "\n" +
+                        "rule \"will execute per each Measurement having ID color\"\n" +
+                        "no-loop\n" +
+                        "when\n" +
+                        " Measurement( id == \"color\", $colorVal : val )\n" +
+                        " Object() from Optional.of($colorVal).orElse(\"blah\")\n" +
+                        "then\n" +
+                        " controlSet.add($colorVal);\n" +
+                        "end";
+
+        KieSession ksession = getKieSession( str );
+
+        HashSet<Object> hashSet = new HashSet<>();
+        ksession.setGlobal("controlSet", hashSet);
+
+        ksession.insert(new Measurement("color", "red"));
+
+        int ruleFired = ksession.fireAllRules();
+
+        assertEquals( 1, ruleFired );
+        assertEquals( "red", hashSet.iterator().next() );
+    }
+
+    public static class DummyService {
+        public String dummy(String a) {
+            return "test";
+        }
+        public String dummy(String a, String b, String c) {
+            return "test";
+        }
+
+        public String dummy(Object a, Object b) {
+            return "test";
+        }
+
+        public static <K, V> Map.Entry<K, V> mapEntry(K key, V value) {
+            return new AbstractMap.SimpleEntry<K, V>(key, value);
+        }
+    }
+
+    @Test
+    public void testNestedService() {
+        // DROOLS-5609
+        String str =
+                "package com.sample;" +
+                "global java.util.Set controlSet;\n" +
+                "global " + DummyService.class.getCanonicalName() + " dummyService;\n" +
+                "import " + Measurement.class.getCanonicalName() + ";\n" +
+                "" +
+                "rule \"will execute per each Measurement having ID color\"\n" +
+                "no-loop\n" +
+                "when\n" +
+                " Measurement( id == \"color\", $colorVal : val )\n" +
+                " String() from dummyService.dummy(dummyService.dummy($colorVal))\n" +
+                "then\n" +
+                " controlSet.add($colorVal);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        HashSet<Object> hashSet = new HashSet<>();
+        ksession.setGlobal("controlSet", hashSet);
+        ksession.setGlobal("dummyService", new DummyService());
+
+        ksession.insert(new Measurement("color", "red"));
+
+        int ruleFired = ksession.fireAllRules();
+
+        assertEquals( 1, ruleFired );
+        assertEquals( "red", hashSet.iterator().next() );
+    }
+
+
+    @Test
+    public void testMultipleFrom() {
+        // DROOLS-5542
+        String str =
+                "package com.sample;" +
+                "global java.util.Set controlSet;\n" +
+                "global " + DummyService.class.getCanonicalName() + " dummyService;\n" +
+                "import " + Measurement.class.getCanonicalName() + ";\n" +
+                "" +
+                "rule \"will execute per each Measurement having ID color\"\n" +
+                "no-loop\n" +
+                "when\n" +
+                " Measurement( id == \"color\", $colorVal : val )\n" +
+                " $var1: String() from dummyService.dummy(\"a\");\n" +
+                " $var2: String() from dummyService.dummy(\"b\");\n" +
+                " $var3: String() from dummyService.dummy(\"c\");\n" +
+                " String() from dummyService.dummy($var1, $var2, $var3)\n" +
+                "then\n" +
+                " controlSet.add($colorVal);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        HashSet<Object> hashSet = new HashSet<>();
+        ksession.setGlobal("controlSet", hashSet);
+        ksession.setGlobal("dummyService", new DummyService());
+
+        ksession.insert(new Measurement("color", "red"));
+
+        int ruleFired = ksession.fireAllRules();
+
+        assertEquals( 1, ruleFired );
+        assertEquals( "red", hashSet.iterator().next() );
+    }
+
+    @Test
+    public void testMultipleFromFromBinding() {
+        // DROOLS-5591
+        String str =
+                "package com.sample;" +
+                "global java.util.Set controlSet;\n" +
+                "global " + DummyService.class.getCanonicalName() + " dummyService;\n" +
+                "import " + Measurement.class.getCanonicalName() + ";\n" +
+                "" +
+                "rule \"will execute per each Measurement having ID color\"\n" +
+                "no-loop\n" +
+                "when\n" +
+                " $m : Measurement( id == \"color\", $colorVal : val )\n" +
+                " String() from dummyService.dummy($m.getId(), $m.getVal())\n" +
+                "then\n" +
+                " controlSet.add($colorVal);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        HashSet<Object> hashSet = new HashSet<>();
+        ksession.setGlobal("controlSet", hashSet);
+        ksession.setGlobal("dummyService", new DummyService());
+
+        ksession.insert(new Measurement("color", "red"));
+
+        int ruleFired = ksession.fireAllRules();
+
+        assertEquals( 1, ruleFired );
+        assertEquals( "red", hashSet.iterator().next() );
+    }
+
+    @Test
+    public void testMultipleFromList() {
+        // DROOLS-5590
+        String str =
+                "package com.sample;" +
+                "global java.util.Set controlSet;\n" +
+                "global " + DummyService.class.getCanonicalName() + " dummyService;\n" +
+                "import " + DummyService.class.getCanonicalName() + ";\n" +
+                "import " + Measurement.class.getCanonicalName() + ";\n" +
+                "import " + List.class.getCanonicalName() + ";\n" +
+                "import " + Map.class.getCanonicalName() + ";\n" +
+                "" +
+                "rule \"will execute per each Measurement having ID color\"\n" +
+                "no-loop\n" +
+                "when\n" +
+                " $measurement: Measurement( id == \"color\", $colorVal : val )\n" +
+                " $lst : List() from collect(Measurement())\n" +
+                " $selectedList: List() from accumulate(Measurement($m: this) from $lst, " +
+                        "collectList(DummyService.mapEntry($m, $measurement.getListOfCodes())))\n" +
+                "\n" +
+                "then\n" +
+                " controlSet.add($colorVal);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        HashSet<Object> hashSet = new HashSet<>();
+        ksession.setGlobal("controlSet", hashSet);
+        ksession.setGlobal("dummyService", new DummyService());
+
+        ksession.insert(new Measurement("color", "red"));
+
+        int ruleFired = ksession.fireAllRules();
+
+        assertEquals( 1, ruleFired );
+        assertEquals( "red", hashSet.iterator().next() );
+    }
+
+    @Test
+    public void tesFromMethodCall() {
+        // DROOLS-5641
+        String str =
+                "package com.sample;" +
+                "global java.util.Set controlSet;\n" +
+                "global " + DummyService.class.getCanonicalName() + " dummyService;\n" +
+                "import " + DummyService.class.getCanonicalName() + ";\n" +
+                "import " + Measurement.class.getCanonicalName() + ";\n" +
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "import " + List.class.getCanonicalName() + ";\n" +
+                "import " + Map.class.getCanonicalName() + ";\n" +
+                "" +
+                "rule \"test\"\n" +
+                "no-loop\n" +
+                "when\n" +
+                " $m: Measurement( id == \"color\", $colorVal : val )\n" +
+                " $p: Person()\n" +
+                " String() from dummyService.dummy($m.getSomethingBy($p.age), $p)\n" +
+                "then\n" +
+                " controlSet.add($colorVal);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        HashSet<Object> hashSet = new HashSet<>();
+        ksession.setGlobal("controlSet", hashSet);
+        ksession.setGlobal("dummyService", new DummyService());
+
+        ksession.insert(new Measurement("color", "red"));
+        ksession.insert(new Person("Luca"));
+
+        int ruleFired = ksession.fireAllRules();
+
+        assertEquals( 1, ruleFired );
+        assertEquals( "red", hashSet.iterator().next() );
+    }
+
+    @Test
+    public void testFromStringConcatenation() {
+        // DROOLS-5640
+        String str =
+                "global java.util.List list;\n" +
+                "rule R when\n" +
+                "  $a : String()\n" +
+                "  $b : String()\n" +
+                "  $c : String() from $a + $b\n" +
+                "then\n" +
+                "  list.add($c);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+        final List<String> list = new ArrayList<>();
+        ksession.setGlobal("list", list);
+
+        ksession.insert( "A" );
+        ksession.insert( "B" );
+        ksession.fireAllRules();
+
+        Assertions.assertThat(list).containsExactlyInAnyOrder("AA", "AB", "BA", "BB");
+    }
+
+    @Test
+    public void testFromBoolean() {
+        // DROOLS-5830
+        String str =
+                "rule R when\n" +
+                "  $a : String()\n" +
+                "  $b : String()\n" +
+                "  Boolean(booleanValue) from $a == $b\n" +
+                "then\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        ksession.insert( "A" );
+        assertEquals( 1, ksession.fireAllRules() );
     }
 }

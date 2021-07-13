@@ -38,11 +38,10 @@ public class RuleContext {
     private final KnowledgePackageImpl pkg;
     private final RuleImpl rule;
 
-    private final Map<Variable, Declaration> queryDeclaration = new HashMap<>();
-    private final Map<Variable, Declaration> innerDeclaration = new HashMap<>();
-    private final Map<Variable, Accumulate> accumulateSource = new HashMap<>();
+    private final Map<Variable, Declaration> declarations = new HashMap<>();
 
-    private final Map<Variable, Pattern> patterns = new HashMap<>();
+    private Map<Variable, Declaration> queryDeclarations;
+    private Map<Variable, Accumulate> accumulateSource;
 
     private int patternIndex = -1;
     private boolean needStreamMode = false;
@@ -73,11 +72,12 @@ public class RuleContext {
     }
 
     void registerPattern( Variable variable, Pattern pattern ) {
-        patterns.put( variable, pattern );
+        declarations.computeIfAbsent(variable, k -> pattern.getDeclaration());
     }
 
     Pattern getPattern( Variable variable ) {
-        return patterns.get( variable );
+        Declaration declaration = declarations.get( variable );
+        return declaration == null ? null : declaration.getPattern();
     }
 
     Declaration getDeclaration( Variable variable ) {
@@ -85,13 +85,9 @@ public class RuleContext {
             return null;
         }
         if ( variable.isFact() ) {
-            Declaration declaration = innerDeclaration.get( variable );
+            Declaration declaration = declarations.get( variable );
             if (declaration == null) {
-                declaration = queryDeclaration.get( variable );
-            }
-            if (declaration == null) {
-                Pattern pattern = patterns.get( variable );
-                declaration = pattern != null ? pattern.getDeclaration() : null;
+                declaration = getQueryDeclaration( variable );
             }
             return declaration;
         } else {
@@ -103,23 +99,33 @@ public class RuleContext {
     }
 
     Declaration getQueryDeclaration( Variable variable ) {
-        return queryDeclaration.get( variable );
+        return queryDeclarations == null ? null : queryDeclarations.get( variable );
     }
 
     void addQueryDeclaration(Variable variable, Declaration declaration) {
-        queryDeclaration.put( variable, declaration );
+        if ( queryDeclarations == null) {
+            queryDeclarations = new HashMap<>();
+        }
+        queryDeclarations.put( variable, declaration );
     }
 
-    void addInnerDeclaration(Variable variable, Declaration declaration) {
-        innerDeclaration.put( variable, declaration );
+    void addDeclaration( Variable variable, Declaration declaration ) {
+        declarations.put( variable, declaration );
     }
 
-    void addAccumulateSource(Variable variable, Accumulate accumulate) {
-        accumulateSource.put( variable, accumulate );
+    void addGroupByDeclaration( Variable groupKeyVar, Declaration declaration ) {
+        addDeclaration( groupKeyVar, declaration );
     }
 
     Accumulate getAccumulateSource( Variable variable) {
-        return accumulateSource.get( variable );
+        return accumulateSource == null ? null : accumulateSource.get( variable );
+    }
+
+    void addAccumulateSource(Variable variable, Accumulate accumulate) {
+        if (accumulateSource == null) {
+            accumulateSource = new HashMap<>();
+        }
+        accumulateSource.put( variable, accumulate );
     }
 
     public ClassLoader getClassLoader() {
@@ -136,22 +142,7 @@ public class RuleContext {
 
     public Map<String, Declaration> getDeclarations() {
         Map<String, Declaration> decls = new HashMap<>();
-        innerDeclaration.forEach( (var, decl) -> decls.put( var.getName(), decl ) );
-        patterns.forEach( (var, pattern) -> decls.put( var.getName(), pattern.getDeclaration() ) );
+        declarations.forEach( ( var, decl) -> decls.put( var.getName(), decl ) );
         return decls;
-    }
-
-    public Class<?> getDeclarationClass(String name) {
-        for (Map.Entry<Variable, Declaration> entry : innerDeclaration.entrySet()) {
-            if (entry.getKey().getName().equals( name )) {
-                return entry.getValue().getDeclarationClass();
-            }
-        }
-        for (Map.Entry<Variable, Pattern> entry : patterns.entrySet()) {
-            if (entry.getKey().getName().equals( name )) {
-                return entry.getValue().getDeclaration().getDeclarationClass();
-            }
-        }
-        return null;
     }
 }

@@ -1,0 +1,15 @@
+package org.kie.pmml.models.mining.model.segmentation;
+
+import java.util.ArrayList;
+import java.util.Collections;
+
+import org.kie.pmml.models.mining.model.segmentation.KiePMMLSegmentation;
+
+public class KiePMMLSegmentationTemplate extends KiePMMLSegmentation {
+
+    public KiePMMLSegmentationTemplate() {
+          super(name, Collections.emptyList(), multipleModelMethod);
+          segments = new ArrayList<>();
+    }
+
+}

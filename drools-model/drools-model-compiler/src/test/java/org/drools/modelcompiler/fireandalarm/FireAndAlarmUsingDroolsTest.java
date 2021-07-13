@@ -1,6 +1,5 @@
 package org.drools.modelcompiler.fireandalarm;
 
-import org.drools.model.BitMask;
 import org.drools.model.Model;
 import org.drools.model.Rule;
 import org.drools.model.Variable;
@@ -16,7 +15,14 @@ import org.kie.api.runtime.KieSession;
 import org.kie.api.runtime.rule.FactHandle;
 
 import static java.util.Arrays.asList;
-import static org.drools.model.FlowDSL.*;
+
+import static org.drools.model.DSL.any;
+import static org.drools.model.DSL.execute;
+import static org.drools.model.DSL.exists;
+import static org.drools.model.DSL.not;
+import static org.drools.model.DSL.on;
+import static org.drools.model.PatternDSL.pattern;
+import static org.drools.model.PatternDSL.rule;
 import static org.junit.Assert.assertTrue;
 
 public class FireAndAlarmUsingDroolsTest {
@@ -31,8 +37,10 @@ public class FireAndAlarmUsingDroolsTest {
 
         Rule r1 = rule("When there is a fire turn on the sprinkler")
                 .build(
-                        expr(sprinkler, s -> !s.isOn()),
-                        expr(sprinkler, fire, (s, f) -> s.getRoom().equals(f.getRoom())),
+                        pattern(fire),
+                        pattern(sprinkler)
+                                .expr(s -> !s.isOn())
+                                .expr(fire, (s, f) -> s.getRoom().equals(f.getRoom())),
                         on(sprinkler)
                                 .execute((drools, s) -> {
                                     System.out.println("Turn on the sprinkler for room " + s.getRoom().getName());
@@ -41,23 +49,21 @@ public class FireAndAlarmUsingDroolsTest {
                                 })
                      );
 
-        BitMask r2_mask1 = BitMask.getPatternMask( Sprinkler.class, "on" );
-
         Rule r2 = rule("When the fire is gone turn off the sprinkler")
                 .build(
-                        expr(sprinkler, Sprinkler::isOn),
-                        not(fire, sprinkler, (f, s) -> f.getRoom().equals(s.getRoom())),
+                        pattern(sprinkler).expr(Sprinkler::isOn),
+                        not(pattern(fire).expr( sprinkler, (f, s) -> f.getRoom().equals(s.getRoom()))),
                         on(sprinkler)
                                 .execute((drools, s) -> {
                                     System.out.println("Turn off the sprinkler for room " + s.getRoom().getName());
                                     s.setOn(false);
-                                    drools.update(s, r2_mask1);
+                                    drools.update(s);
                                 })
                      );
 
         Rule r3 = rule("Raise the alarm when we have one or more fires")
                 .build(
-                        exists(fire),
+                        exists(pattern(fire)),
                         execute(drools -> {
                             System.out.println("Raise the alarm");
                             drools.insert(new Alarm());
@@ -66,7 +72,8 @@ public class FireAndAlarmUsingDroolsTest {
 
         Rule r4 = rule("Lower the alarm when all the fires have gone")
                 .build(
-                        not(fire),
+                        not(pattern(fire)),
+                        pattern(alarm),
                         on(alarm)
                                 .execute((drools, a) -> {
                                     System.out.println("Lower the alarm");
@@ -76,8 +83,8 @@ public class FireAndAlarmUsingDroolsTest {
 
         Rule r5 = rule("Status output when things are ok")
                 .build(
-                        not(alarm),
-                        not(sprinkler, Sprinkler::isOn),
+                        not(pattern(alarm)),
+                        not(pattern(sprinkler).expr(Sprinkler::isOn)),
                         execute(() -> System.out.println("Everything is ok"))
                      );
 

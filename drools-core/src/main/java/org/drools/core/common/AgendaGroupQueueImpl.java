@@ -24,12 +24,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.drools.core.conflict.PhreakConflictResolver;
 import org.drools.core.impl.InternalKnowledgeBase;
 import org.drools.core.marshalling.impl.MarshallerReaderContext;
-import org.drools.core.marshalling.impl.MarshallerWriteContext;
-import org.drools.core.marshalling.impl.ProtobufMessages;
 import org.drools.core.phreak.PropagationEntry;
 import org.drools.core.spi.Activation;
 import org.drools.core.spi.PropagationContext;
+import org.drools.core.util.ArrayQueue;
 import org.drools.core.util.BinaryHeapQueue;
+import org.drools.core.util.Queue;
 
 /**
  * <code>AgendaGroup</code> implementation that uses a <code>PriorityQueue</code> to prioritise the evaluation of added
@@ -47,7 +47,7 @@ public class AgendaGroupQueueImpl
     /**
      * Items in the agenda.
      */
-    protected final  BinaryHeapQueue    priorityQueue;
+    private          Queue              priorityQueue;
     private volatile boolean            active;
     private          PropagationContext autoFocusActivator;
     private          long               activatedForRecency;
@@ -69,13 +69,7 @@ public class AgendaGroupQueueImpl
         this.name = name;
         this.sequential = kBase.getConfiguration().isSequential();
 
-        this.priorityQueue = initPriorityQueue( kBase );
-
         this.clearedForRecency = -1;
-    }
-
-    protected BinaryHeapQueue initPriorityQueue( InternalKnowledgeBase kBase ) {
-        return new BinaryHeapQueue(new PhreakConflictResolver());
     }
 
     @Override
@@ -94,6 +88,12 @@ public class AgendaGroupQueueImpl
 
     public void setWorkingMemory(InternalWorkingMemory workingMemory) {
         this.workingMemory = workingMemory;
+        // workingMemory can be null during deserialization
+        if (workingMemory != null && workingMemory.getSessionConfiguration().isDirectFiring()) {
+            this.priorityQueue = new ArrayQueue();
+        } else {
+            this.priorityQueue = new BinaryHeapQueue(new PhreakConflictResolver());
+        }
     }
 
     public InternalWorkingMemory getWorkingMemory() {
@@ -277,28 +277,14 @@ public class AgendaGroupQueueImpl
 
         private static final long     serialVersionUID = 510l;
 
-        private InternalRuleFlowGroup ruleFlowGroup;
+        protected final InternalRuleFlowGroup ruleFlowGroup;
 
         public DeactivateCallback(InternalRuleFlowGroup ruleFlowGroup) {
             this.ruleFlowGroup = ruleFlowGroup;
         }
 
         public DeactivateCallback(MarshallerReaderContext context) throws IOException {
-            this.ruleFlowGroup = (InternalRuleFlowGroup) context.wm.getAgenda().getRuleFlowGroup( context.readUTF() );
-        }
-
-        public DeactivateCallback(MarshallerReaderContext context,
-                                  ProtobufMessages.ActionQueue.Action _action) {
-            this.ruleFlowGroup = (InternalRuleFlowGroup) context.wm.getAgenda().getRuleFlowGroup( _action.getDeactivateCallback().getRuleflowGroup() );
-        }
-
-        public ProtobufMessages.ActionQueue.Action serialize(MarshallerWriteContext context) {
-            return ProtobufMessages.ActionQueue.Action.newBuilder()
-                                               .setType( ProtobufMessages.ActionQueue.ActionType.DEACTIVATE_CALLBACK )
-                                               .setDeactivateCallback( ProtobufMessages.ActionQueue.DeactivateCallback.newBuilder()
-                                                                                                   .setRuleflowGroup( ruleFlowGroup.getName() )
-                                                                                                   .build() )
-                                               .build();
+            this.ruleFlowGroup = (InternalRuleFlowGroup) context.getWorkingMemory().getAgenda().getRuleFlowGroup( context.readUTF() );
         }
 
         public void execute(InternalWorkingMemory workingMemory) {

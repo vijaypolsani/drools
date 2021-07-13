@@ -17,13 +17,19 @@
 package org.drools.compiler.integrationtests.operators;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
+import java.util.List;
+import java.util.Locale;
 
 import org.drools.testcoverage.common.model.Person;
 import org.drools.testcoverage.common.util.KieBaseTestConfiguration;
 import org.drools.testcoverage.common.util.KieBaseUtil;
 import org.drools.testcoverage.common.util.TestParametersUtil;
+import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -107,6 +113,12 @@ public class ForAllTest {
         check("name.length() < 6", "age >= 18, name.startsWith(\"M\")", 1, new Person("Mario", 45), new Person("Mark", 43), new Person("Daniele", 43));
     }
 
+    @Test
+    public void testNoFiring() {
+        // DROOLS-5915
+        check("", "age >= 18", 0);
+    }
+
     private void check(String constraints1, int expectedFires, Object... objs) {
         check( constraints1, null, expectedFires, objs );
     }
@@ -160,7 +172,7 @@ public class ForAllTest {
         KieBase kbase = KieBaseUtil.getKieBaseFromKieModuleFromDrl("forall-test", kieBaseTestConfiguration, drl);
         KieSession ksession = kbase.newKieSession();
 
-        SimpleDateFormat df = new SimpleDateFormat("dd-MMM-yyyy");
+        SimpleDateFormat df = new SimpleDateFormat("dd-MMM-yyyy", Locale.UK);
 
         FactType factType = kbase.getFactType(pkg, "Fact");
 
@@ -239,5 +251,129 @@ public class ForAllTest {
         ksession.insert(new Date(0));
 
         assertEquals(1, ksession.fireAllRules());
+    }
+
+    public class Pojo {
+
+        private List<Integer> x = new ArrayList<>();
+        private int y;
+        private int z;
+
+        public Pojo(List<Integer> x, int y, int z) {
+            this.x.addAll(x);
+            this.y = y;
+            this.z = z;
+        }
+
+        public List<Integer> getX() {
+            return x;
+        }
+
+        public void setX(List<Integer> x) {
+            this.x.addAll(x);
+        }
+
+        public int getY() {
+            return y;
+        }
+
+        public void setY(int y) {
+            this.y = y;
+        }
+
+        public int getZ() {
+            return z;
+        }
+
+        public void setZ(int z) {
+            this.z = z;
+        }
+
+        @Override
+        public String toString() {
+            return "Pojo{" + "x=" + x + ", y=" + y + ", z=" + z + '}';
+        }
+    }
+
+    @Test
+    public void testForallWithEmptyListConstraintCombinedWithOrFiring() throws Exception {
+        checkForallWithEmptyListConstraintCombinedWithOrFiring(true);
+    }
+
+    @Test
+    public void testForallWithEmptyListConstraintCombinedWithOrNotFiring() throws Exception {
+        checkForallWithEmptyListConstraintCombinedWithOrFiring(false);
+    }
+
+    private void checkForallWithEmptyListConstraintCombinedWithOrFiring(boolean firing) {
+        // DROOLS-5682
+
+        String drl =
+                "import " + Pojo.class.getCanonicalName() + ";\n" +
+                "rule \"forall with not equal\"\n" +
+                "when forall($p : Pojo(y == 1)\n" +
+                "            Pojo(x.empty || x contains 2, z == 3, this == $p))\n" +
+                "then\n" +
+                "end\n";
+
+        KieBase kbase = KieBaseUtil.getKieBaseFromKieModuleFromDrl("forall-test", kieBaseTestConfiguration, drl);
+        KieSession ksession = kbase.newKieSession();
+
+        ksession.insert(new Pojo(Collections.emptyList(), 1, 3));
+        ksession.insert(new Pojo(Arrays.asList(2), 1, 3));
+        ksession.insert(new Pojo(Arrays.asList(3), firing ? 0 : 1, 3));
+        ksession.insert(new Pojo(Arrays.asList(2), firing ? 0 : 1, 0));
+
+        Assert.assertEquals(firing ? 1 : 0, ksession.fireAllRules());
+    }
+
+    @Test
+    public void testForallWithMultipleConstraints() throws Exception {
+        checkForallWithComplexExpression("value > 1, value < 10");
+    }
+
+    @Test
+    public void testForallWithAnd() throws Exception {
+        checkForallWithComplexExpression("value > 1 && value < 10");
+    }
+
+    @Test
+    public void testForallWithAndInMultipleConstraints() throws Exception {
+        checkForallWithComplexExpression("value > 1, value > 2 && value < 10");
+    }
+
+    @Test
+    public void testForallWithOr() throws Exception {
+        checkForallWithComplexExpression("value < 1 || value > 50");
+    }
+
+    private void checkForallWithComplexExpression(String expression) throws Exception {
+        // DROOLS-6469
+        String drl =
+                "package test\n" +
+                "declare Fact\n" +
+                "    tag : String\n" +
+                "    value : int\n" +
+                "end\n" +
+                "rule \"Rule\"\n" +
+                "when\n" +
+                "forall (f:Fact(tag == \"X\") Fact(this==f, " + expression + "))\n" +
+                "then\n" +
+                "end";
+
+        KieBase kbase = KieBaseUtil.getKieBaseFromKieModuleFromDrl("forall-test", kieBaseTestConfiguration, drl);
+        KieSession ksession = kbase.newKieSession();
+
+        FactType ft = kbase.getFactType("test", "Fact");
+        Object f1 = ft.newInstance();
+        ft.set(f1, "tag", "X");
+        ft.set(f1, "value", 42);
+        ksession.insert(f1);
+        Object f2 = ft.newInstance();
+        ft.set(f2, "tag", "Y");
+        ft.set(f2, "value", 42);
+        ksession.insert(f2);
+
+        Assert.assertEquals(0, ksession.fireAllRules());
     }
 }

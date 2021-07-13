@@ -16,6 +16,7 @@
 
 package org.drools.modelcompiler.constraints;
 
+import org.drools.core.RuleBaseConfiguration;
 import org.drools.core.base.DroolsQuery;
 import org.drools.core.common.InternalFactHandle;
 import org.drools.core.common.InternalWorkingMemory;
@@ -31,28 +32,26 @@ import org.drools.core.util.index.IndexUtil;
 import org.drools.model.Index;
 import org.drools.modelcompiler.constraints.LambdaConstraint.LambdaContextEntry;
 
-import static org.drools.core.rule.constraint.MvelConstraint.INDEX_EVALUATOR;
-
 public class UnificationConstraint extends MutableTypeConstraint implements IndexableConstraint {
 
-    private final Declaration declaration;
+    private Declaration indexingDeclaration;
     private final InternalReadAccessor readAccessor;
     private final ConstraintEvaluator evaluator;
 
     private boolean unification = true;
 
-    public UnificationConstraint( Declaration declaration ) {
-        this(declaration, null);
+    public UnificationConstraint( Declaration indexingDeclaration ) {
+        this( indexingDeclaration, null);
     }
 
-    public UnificationConstraint( Declaration declaration, ConstraintEvaluator evaluator ) {
-        this.declaration = declaration;
+    public UnificationConstraint( Declaration indexingDeclaration, ConstraintEvaluator evaluator ) {
+        this.indexingDeclaration = indexingDeclaration;
         this.evaluator = evaluator;
         if (evaluator != null) {
             Index index = evaluator.getIndex();
             this.readAccessor = new LambdaReadAccessor( index.getIndexId(), index.getIndexedClass(), index.getLeftOperandExtractor() );
         } else {
-            this.readAccessor = new LambdaReadAccessor( declaration.getDeclarationClass(), x -> x );
+            this.readAccessor = new LambdaReadAccessor( indexingDeclaration.getDeclarationClass(), x -> x );
         }
     }
 
@@ -67,7 +66,7 @@ public class UnificationConstraint extends MutableTypeConstraint implements Inde
     }
 
     @Override
-    public boolean isIndexable( short nodeType ) {
+    public boolean isIndexable( short nodeType, RuleBaseConfiguration config ) {
         return true;
     }
 
@@ -83,7 +82,7 @@ public class UnificationConstraint extends MutableTypeConstraint implements Inde
 
     @Override
     public FieldIndex getFieldIndex() {
-        return new FieldIndex(readAccessor, declaration, INDEX_EVALUATOR);
+        return new FieldIndex(readAccessor, indexingDeclaration );
     }
 
     @Override
@@ -92,22 +91,28 @@ public class UnificationConstraint extends MutableTypeConstraint implements Inde
     }
 
     @Override
+    public Declaration getIndexExtractor() {
+        return indexingDeclaration;
+    }
+
+    @Override
     public Declaration[] getRequiredDeclarations() {
-        return new Declaration[] { declaration };
+        return new Declaration[] { indexingDeclaration };
     }
 
     @Override
     public void replaceDeclaration( Declaration oldDecl, Declaration newDecl ) {
+        if (indexingDeclaration == oldDecl) {
+            indexingDeclaration = newDecl;
+        }
         if (evaluator != null) {
             evaluator.replaceDeclaration( oldDecl, newDecl );
-        } else {
-            throw new UnsupportedOperationException();
         }
     }
 
     @Override
     public MutableTypeConstraint clone() {
-        return new UnificationConstraint( declaration, evaluator );
+        return new UnificationConstraint( indexingDeclaration, evaluator );
     }
 
     @Override
@@ -135,13 +140,13 @@ public class UnificationConstraint extends MutableTypeConstraint implements Inde
             return evaluator.evaluate(handle, tuple, workingMemory);
         }
         DroolsQuery query = ( DroolsQuery ) tuple.getObject( 0 );
-        if (query.getVariables()[declaration.getExtractor().getIndex()] != null) {
+        if (query.getVariables()[indexingDeclaration.getExtractor().getIndex()] != null) {
             return true;
         }
         if (evaluator != null) {
             return evaluator.evaluate(handle, tuple, workingMemory);
         }
-        Object argument = declaration.getValue( null, query );
+        Object argument = indexingDeclaration.getValue( null, query );
         return handle.getObject().equals( argument );
     }
 

@@ -38,10 +38,9 @@ import org.drools.compiler.lang.descr.EntryPointDescr;
 import org.drools.compiler.lang.descr.PatternDescr;
 import org.drools.compiler.lang.descr.QueryDescr;
 import org.drools.compiler.lang.descr.RuleDescr;
-import org.drools.compiler.rule.builder.dialect.mvel.MVELObjectExpressionBuilder;
+import org.drools.core.base.CoreComponentsBuilder;
 import org.drools.core.base.EnabledBoolean;
 import org.drools.core.base.SalienceInteger;
-import org.drools.core.base.mvel.MVELObjectExpression;
 import org.drools.core.definitions.rule.impl.RuleImpl;
 import org.drools.core.factmodel.AnnotationDefinition;
 import org.drools.core.rule.GroupElement;
@@ -49,13 +48,13 @@ import org.drools.core.rule.Pattern;
 import org.drools.core.spi.AgendaGroup;
 import org.drools.core.spi.Salience;
 import org.drools.core.time.TimeUtils;
+import org.drools.core.time.TimerExpression;
 import org.drools.core.time.impl.CronExpression;
 import org.drools.core.time.impl.CronTimer;
 import org.drools.core.time.impl.ExpressionIntervalTimer;
 import org.drools.core.time.impl.IntervalTimer;
 import org.drools.core.time.impl.Timer;
 import org.drools.core.util.DateUtils;
-import org.drools.core.util.MVELSafeHelper;
 import org.drools.core.util.StringUtils;
 import org.kie.api.definition.rule.ActivationListener;
 import org.kie.api.definition.rule.All;
@@ -188,7 +187,7 @@ public class RuleBuilder {
         Object result = value;
         // try to resolve as an expression:
         try {
-            result = MVELSafeHelper.getEvaluator().eval( value );
+            result = CoreComponentsBuilder.get().getMVELExecutor().eval( value );
         } catch ( Exception e ) {
             // do nothing
         }
@@ -291,7 +290,7 @@ public class RuleBuilder {
         try {
             ActivationListener activationListener = ruleDescr.getTypedAnnotation(ActivationListener.class);
             if (activationListener != null) {
-                rule.setActivationListener(MVELSafeHelper.getEvaluator().evalToString(activationListener.value()));
+                rule.setActivationListener(CoreComponentsBuilder.get().getMVELExecutor().evalToString(activationListener.value()));
             }
 
             if (enforceEager) {
@@ -371,7 +370,7 @@ public class RuleBuilder {
     private static void buildCalendars(RuleImpl rule, String calendarsString, RuleBuildContext context) {
         Object val = null;
         try {
-            val = MVELSafeHelper.getEvaluator().eval( calendarsString );
+            val = CoreComponentsBuilder.get().getMVELExecutor().eval( calendarsString );
             String[] calNames = null;
             if ( val instanceof List ) {
                 calNames = ( String[] ) ((List)val).toArray( new String[ ((List)val).size() ] );
@@ -397,7 +396,7 @@ public class RuleBuilder {
     }
 
     public static Timer buildTimer( RuleImpl rule, String timerString, RuleBuildContext context,
-                                    Function<String, MVELObjectExpression> exprCreator, Consumer<String> errorManager ) {
+                                    Function<String, TimerExpression> exprCreator, Consumer<String> errorManager ) {
         if( timerString.indexOf( '(' ) >=0 ) {
             timerString = timerString.substring( timerString.indexOf( '(' )+1, timerString.lastIndexOf( ')' ) ).trim();
         }
@@ -466,16 +465,20 @@ public class RuleBuilder {
                 return null;
             }
 
-            MVELObjectExpression times = MVELObjectExpressionBuilder.build( tok.nextToken().trim(), context );
-            MVELObjectExpression period = tok.hasMoreTokens() ?
-                                          MVELObjectExpressionBuilder.build( tok.nextToken().trim(), context ) :
-                                          MVELObjectExpressionBuilder.build( "0", context );
+            TimerExpression times = createTimerExpression( context, exprCreator, tok.nextToken().trim() );
+            TimerExpression period = createTimerExpression( context, exprCreator, tok.hasMoreTokens() ? tok.nextToken().trim() : "0");
 
             return new ExpressionIntervalTimer( exprCreator.apply(startDate), exprCreator.apply(endDate), repeatLimit, times, period );
         }
 
         errorManager.accept( "Protocol for timer does not exist '" + timerString +"'" );
         return null;
+    }
+
+    private static TimerExpression createTimerExpression( RuleBuildContext context, Function<String, TimerExpression> exprCreator, String expression ) {
+        return context != null ?
+                ConstraintBuilder.get().buildTimerExpression( expression, context ) :
+                exprCreator.apply( expression );
     }
 
     private static String extractParam(String timerString, String name) {
@@ -489,7 +492,7 @@ public class RuleBuilder {
         return timerString.substring( equalsPos + 1, endPos ).trim();
     }
 
-    private static MVELObjectExpression createMVELExpr(String expr, RuleBuildContext context) {
+    private static TimerExpression createMVELExpr(String expr, RuleBuildContext context) {
         if (expr == null || context == null) {
             return null;
         }
@@ -497,7 +500,7 @@ public class RuleBuilder {
             DateUtils.parseDate( expr );
             expr = "\"" + expr + "\""; // if expr is a valid date wrap in quotes
         } catch (Exception e) { }
-        return MVELObjectExpressionBuilder.build( expr, context );
+        return ConstraintBuilder.get().buildTimerExpression( expr, context );
     }
 
     private static void registerError(String error, RuleImpl rule, RuleBuildContext context) {

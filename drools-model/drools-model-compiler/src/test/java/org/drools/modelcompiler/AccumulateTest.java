@@ -23,29 +23,41 @@ import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
+import java.util.GregorianCalendar;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 
+import org.apache.commons.math3.util.Pair;
 import org.assertj.core.api.Assertions;
+import org.drools.core.base.accumulators.IntegerMaxAccumulateFunction;
+import org.drools.core.spi.Activation;
+import org.drools.model.functions.accumulate.GroupKey;
 import org.drools.modelcompiler.domain.Adult;
 import org.drools.modelcompiler.domain.Child;
 import org.drools.modelcompiler.domain.Customer;
+import org.drools.modelcompiler.domain.Parent;
 import org.drools.modelcompiler.domain.Person;
 import org.drools.modelcompiler.domain.Result;
 import org.drools.modelcompiler.domain.StockTick;
 import org.drools.modelcompiler.domain.TargetPolicy;
 import org.drools.modelcompiler.oopathdtables.InternationalAddress;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.kie.api.definition.type.FactType;
 import org.kie.api.runtime.KieSession;
@@ -53,8 +65,10 @@ import org.kie.api.runtime.rule.AccumulateFunction;
 import org.kie.api.runtime.rule.FactHandle;
 
 import static org.hamcrest.CoreMatchers.hasItem;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public class AccumulateTest extends BaseModelTest {
 
@@ -68,7 +82,7 @@ public class AccumulateTest extends BaseModelTest {
                 "import " + Person.class.getCanonicalName() + ";" +
                         "import " + Result.class.getCanonicalName() + ";" +
                         "rule X when\n" +
-                        "  accumulate ( $p: Person ( getName().startsWith(\"M\")); \n" +
+                        "  accumulate ( $p: Person ( getName().startsWith(\"M\") ); \n" +
                         "                $sum : sum($p.getAge())  \n" +
                         "              )                          \n" +
                         "then\n" +
@@ -86,6 +100,64 @@ public class AccumulateTest extends BaseModelTest {
         Collection<Result> results = getObjectsIntoList(ksession, Result.class);
         assertEquals(1, results.size());
         assertEquals(77, results.iterator().next().getValue());
+    }
+
+    @Test
+    public void testFromOnAccumulatedValue() {
+        // DROOLS-5635
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                        "import " + Result.class.getCanonicalName() + ";" +
+                        "rule X when\n" +
+                        "  accumulate ( $p: Person ( getName().startsWith(\"M\") ); \n" +
+                        "                $sum : sum($p.getAge())  \n" +
+                        "              )                          \n" +
+                        "  $s: String() from $sum.toString()\n" +
+                        "then\n" +
+                        "  insert(new Result($s));\n" +
+                        "end";
+
+        KieSession ksession = getKieSession( str );
+
+        ksession.insert("test");
+        ksession.insert(new Person("Mark", 37));
+        ksession.insert(new Person("Edson", 35));
+        ksession.insert(new Person("Mario", 40));
+
+        ksession.fireAllRules();
+
+        Collection<Result> results = getObjectsIntoList(ksession, Result.class);
+        assertEquals(1, results.size());
+        assertEquals("77", results.iterator().next().getValue());
+    }
+
+    @Test
+    public void testFromOnAccumulatedValueUsingExists() {
+        // DROOLS-5635
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                        "import " + Result.class.getCanonicalName() + ";" +
+                        "rule X when\n" +
+                        "  accumulate ( $p: Person ( getName().startsWith(\"M\") ) and exists(String()); \n" +
+                        "                $sum : sum($p.getAge())  \n" +
+                        "              )                          \n" +
+                        "  $s: String() from $sum.toString()\n" +
+                        "then\n" +
+                        "  insert(new Result($s));\n" +
+                        "end";
+
+        KieSession ksession = getKieSession( str );
+
+        ksession.insert("test");
+        ksession.insert(new Person("Mark", 37));
+        ksession.insert(new Person("Edson", 35));
+        ksession.insert(new Person("Mario", 40));
+
+        ksession.fireAllRules();
+
+        Collection<Result> results = getObjectsIntoList(ksession, Result.class);
+        assertEquals(1, results.size());
+        assertEquals("77", results.iterator().next().getValue());
     }
 
     @Test
@@ -1024,7 +1096,6 @@ public class AccumulateTest extends BaseModelTest {
     }
 
     @Test
-    @Ignore("this should use a strongly typed declared type")
     public void testUseAccumulateFunctionWithListMvelDialect() throws Exception {
         String str = "package org.test;" +
                 "import java.util.*; " +
@@ -1036,7 +1107,7 @@ public class AccumulateTest extends BaseModelTest {
                 "  dialect 'mvel' " +
                 "when\n" +
                 "    accumulate ( $data : Data( $bias : bias )," +
-                "                 $tot : sum( $data.values[ 0 ] + $bias ) ) " +
+                "                 $tot : sum( ((Integer)$data.values[ 0 ]) + $bias ) ) " +
                 "then\n" +
                 "  insert($tot);\n" +
                 "end";
@@ -1160,6 +1231,38 @@ public class AccumulateTest extends BaseModelTest {
         assertEquals(1, results.size());
         assertEquals(23, results.iterator().next().getValue());
     }
+
+    @Test
+    public void testBigDecimalOperationsInAccumulateConstraint() {
+        String str = "import " + Person.class.getCanonicalName() + ";\n" +
+                "import " + BigDecimal.class.getCanonicalName() + ";\n" +
+                "global java.util.List results;\n" +
+                "rule \"rule1\"\n" +
+                "when\n" +
+                "    $moneySummed : BigDecimal () from accumulate( " +
+                "       Person( money != null, $bd: (money + money)), " +
+                "       sum($bd))\n" +
+                "then\n" +
+                "    results.add($moneySummed);\n" +
+                "end\n";
+
+        KieSession ksession1 = getKieSession(str);
+
+        ArrayList<BigDecimal> results = new ArrayList<>();
+        ksession1.setGlobal("results", results);
+
+        Person p1 = new Person();
+        p1.setMoney( new BigDecimal(1 ));
+        ksession1.insert( p1 );
+        Person p2 = new Person();
+        p2.setMoney( new BigDecimal(3 ));
+        ksession1.insert(p2);
+        assertEquals( 1, ksession1.fireAllRules() );
+
+        Assertions.assertThat(results).containsExactly(BigDecimal.valueOf(8));
+
+    }
+
 
 
     // do also the test with two functions
@@ -1719,29 +1822,6 @@ public class AccumulateTest extends BaseModelTest {
         assertEquals( 119, results.get("M") );
     }
 
-    public static class GroupKey {
-        private final Object key;
-
-        public GroupKey( Object key ) {
-            this.key = key;
-        }
-
-        public Object getKey() {
-            return key;
-        }
-
-        @Override
-        public boolean equals( Object o ) {
-            GroupKey groupKey = ( GroupKey ) o;
-            return key.equals( groupKey.key );
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash( key );
-        }
-    }
-
     @Test
     public void testGroupBy3() {
         // DROOLS-4737
@@ -1752,20 +1832,20 @@ public class AccumulateTest extends BaseModelTest {
                 "global Map results;\n" +
                 "rule R1 when\n" +
                 "    Person( $initial : name.substring(0,1) )\n" +
-                "    not( GroupKey(key == $initial) )\n" +
+                "    not( GroupKey(topic ==\"a\", key == $initial) )\n" +
                 "then\n" +
-                "    insert( new GroupKey( $initial ) );\n" +
+                "    insert( new GroupKey( \"a\", $initial ) );\n" +
                 "end\n" +
                 "\n" +
                 "rule R2 when\n" +
-                "    $k: GroupKey( $initial : key )\n" +
+                "    $k: GroupKey( topic ==\"a\", $initial : key )\n" +
                 "    not( Person( name.substring(0,1) == $initial ) )\n" +
                 "then\n" +
                 "    delete( $k );\n" +
                 "end\n" +
                 "\n" +
                 "rule R3 when\n" +
-                "    GroupKey( $initial : key )\n" +
+                "    GroupKey( topic ==\"a\", $initial : key )\n" +
                 "    accumulate (\n" +
                 "            Person( $age: age, name.substring(0,1) == $initial );\n" +
                 "            $sumOfAges : sum($age)\n" +
@@ -1807,6 +1887,217 @@ public class AccumulateTest extends BaseModelTest {
         assertEquals( 2, results.size() );
         assertEquals( 40, results.get("G") );
         assertEquals( 119, results.get("M") );
+    }
+
+    @Test
+    public void testGroupBy3WithExists() {
+        String str =
+                "import java.util.*;\n" +
+                "import " + GroupKey.class.getCanonicalName() + ";\n" +
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "global Map results;\n" +
+                "rule R1 when\n" +
+                "    Person( $initial : name.substring(0,1) )\n" +
+                "    exists( String( this == $initial) )\n " +
+                "    not( GroupKey(topic ==\"a\", key == $initial) )\n" +
+                "then\n" +
+                "    insert( new GroupKey( \"a\", $initial ) );\n" +
+                "end\n" +
+                "\n" +
+                "rule R2 when\n" +
+                "    $k: GroupKey( topic ==\"a\", $initial : key )\n" +
+                "    not( Person( name.substring(0,1) == $initial ) )\n" +
+                "then\n" +
+                "    delete( $k );\n" +
+                "end\n" +
+                "\n" +
+                "rule R3 when\n" +
+                "    GroupKey( topic ==\"a\", $initial : key )\n" +
+                "    accumulate (\n" +
+                "            Person( $age: age, name.substring(0,1) == $initial );\n" +
+                "            $sumOfAges : sum($age)\n" +
+                "         )\n" +
+                "then\n" +
+                "    results.put($initial, $sumOfAges);\n" +
+                "end";
+
+        KieSession ksession = getKieSession(str);
+
+        Map results = new HashMap();
+        ksession.setGlobal( "results", results );
+
+        ksession.insert(new Person("Mark", 42));
+        ksession.insert(new Person("Edson", 38));
+        FactHandle meFH = ksession.insert(new Person("Mario", 45));
+        ksession.insert(new Person("Maciej", 39));
+        ksession.insert(new Person("Edoardo", 33));
+        FactHandle geoffreyFH = ksession.insert(new Person("Geoffrey", 35));
+
+        ksession.insert( "G" );
+        ksession.insert( "M" );
+        ksession.insert( "X" );
+
+        ksession.fireAllRules();
+
+        assertEquals( 2, results.size() );
+        assertEquals( 35, results.get("G") );
+        assertNull( results.get("E") );
+        assertEquals( 126, results.get("M") );
+        results.clear();
+
+        ksession.delete( meFH );
+        ksession.fireAllRules();
+
+        assertEquals( 1, results.size() );
+        assertEquals( 81, results.get("M") );
+        results.clear();
+
+        ksession.update(geoffreyFH, new Person("Geoffrey", 40));
+        ksession.insert(new Person("Matteo", 38));
+        ksession.fireAllRules();
+
+        assertEquals( 2, results.size() );
+        assertEquals( 40, results.get("G") );
+        assertEquals( 119, results.get("M") );
+    }
+
+    @Test
+    public void testGroupBy3WithExists2() {
+        String str =
+                "import java.util.*;\n" +
+                "import " + GroupKey.class.getCanonicalName() + ";\n" +
+                "import " + Parent.class.getCanonicalName() + ";\n" +
+                "import " + Child.class.getCanonicalName() + ";\n" +
+                "global List results;\n" +
+                "rule R1 when\n" +
+                "    $p : Parent()\n" +
+                "    exists( Child( this == $p.child) )\n " +
+                "    not( GroupKey(topic ==\"a\", key == $p.getChild() ) )\n" +
+                "then\n" +
+                "    insert( new GroupKey( \"a\", $p.getChild() ) );\n" +
+                "end\n" +
+                "\n" +
+                "rule R2 when\n" +
+                "    $group: GroupKey( topic ==\"a\", $key : key )\n" +
+                "    not( $p : Parent() and exists( Child( this == $key ) ) )\n" +
+                "then\n" +
+                "    delete( $group );\n" +
+                "end\n" +
+                "\n" +
+                "rule R3 when\n" +
+                "    GroupKey( topic ==\"a\", $k : key )\n" +
+                "    accumulate (\n" +
+                "            $p : Parent() and exists( Child( this == $p.getChild()) );\n" +
+                "            $count : count($p)\n" +
+                "         )\n" +
+                "then\n" +
+                "    results.add(java.util.Arrays.asList($k, $count));\n" +
+                "end";
+
+        KieSession ksession = getKieSession(str);
+
+        List results = new ArrayList();
+        ksession.setGlobal( "results", results );
+
+        Child child1 = new Child("Child1", 1);
+        Parent parent1 = new Parent("Parent1", child1);
+        Child child2 = new Child("Child2", 2);
+        Parent parent2 = new Parent("Parent2", child2);
+
+        ksession.insert(parent1);
+        ksession.insert(parent2);
+       FactHandle toRemove = ksession.insert(child1);
+        ksession.insert(child2);
+        ksession.fireAllRules();
+        Assertions.assertThat(results)
+                  .containsOnly(Arrays.asList(child1, 2L), Arrays.asList(child2, 2L));
+
+        // Remove child1, therefore it does not exist, therefore there should be no groupBy matches for the child.
+        results.clear();
+        ksession.delete(toRemove);
+
+        // Yet, we still get (Child2, 0).
+        ksession.fireAllRules();
+        Assertions.assertThat(results)
+                .containsOnly(Arrays.asList(child2, 1L));
+    }
+
+    @Test
+    public void testGroupBy3With2VarsKey() {
+        String str =
+                "import java.util.*;\n" +
+                "import " + GroupKey.class.getCanonicalName() + ";\n" +
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "global Map results;\n" +
+                "rule R1 when\n" +
+                "    Person( $initial : name.substring(0,1) )\n" +
+                "    String( $l : length )\n " +
+                "    not( GroupKey(topic ==\"a\", key == $initial + $l) )\n" +
+                "then\n" +
+                "    insert( new GroupKey( \"a\", $initial + $l ) );\n" +
+                "end\n" +
+                "\n" +
+                "rule R2 when\n" +
+                "    $group: GroupKey( topic ==\"a\", $k : key )\n" +
+                "    not( Person( $initial : name.substring(0,1) ) and\n" +
+                "         String( $l : length, $k == $initial + $l )\n " +
+                "    )\n" +
+                "then\n" +
+                "    delete( $group );\n" +
+                "end\n" +
+                "\n" +
+                "rule R3 when\n" +
+                "    GroupKey( topic ==\"a\", $k : key )\n" +
+                "    accumulate (\n" +
+                "            Person( $age: age, $initial : name.substring(0,1) ) and\n" +
+                "            String( $l : length, $k == $initial + $l );\n" +
+                "            $sumOfAges : sum($age)\n" +
+                "         )\n" +
+                "then\n" +
+                "    results.put($k, $sumOfAges);\n" +
+                "end";
+
+        KieSession ksession = getKieSession(str);
+
+        Map results = new HashMap();
+        ksession.setGlobal( "results", results );
+
+        ksession.insert( "test" );
+        ksession.insert( "check" );
+        ksession.insert(new Person("Mark", 42));
+        ksession.insert(new Person("Edson", 38));
+        FactHandle meFH = ksession.insert(new Person("Mario", 45));
+        ksession.insert(new Person("Maciej", 39));
+        ksession.insert(new Person("Edoardo", 33));
+        FactHandle geoffreyFH = ksession.insert(new Person("Geoffrey", 35));
+        ksession.fireAllRules();
+
+        assertEquals( 6, results.size() );
+        assertEquals( 35, results.get("G4") );
+        assertEquals( 71, results.get("E4") );
+        assertEquals( 126, results.get("M4") );
+        assertEquals( 35, results.get("G5") );
+        assertEquals( 71, results.get("E5") );
+        assertEquals( 126, results.get("M5") );
+        results.clear();
+
+        ksession.delete( meFH );
+        ksession.fireAllRules();
+
+        assertEquals( 2, results.size() );
+        assertEquals( 81, results.get("M4") );
+        assertEquals( 81, results.get("M5") );
+        results.clear();
+
+        ksession.update(geoffreyFH, new Person("Geoffrey", 40));
+        ksession.insert(new Person("Matteo", 38));
+        ksession.fireAllRules();
+
+        assertEquals( 4, results.size() );
+        assertEquals( 40, results.get("G4") );
+        assertEquals( 119, results.get("M4") );
+        assertEquals( 40, results.get("G5") );
+        assertEquals( 119, results.get("M5") );
     }
 
     @Test
@@ -1940,7 +2231,6 @@ public class AccumulateTest extends BaseModelTest {
         List<Long> result = new ArrayList<>();
 
         KieSession ksession = getKieSession(drl);
-        ReteDumper.dumpRete( ksession );
         ksession.setGlobal("result", result);
 
         ksession.insert(new Interval(
@@ -2145,5 +2435,1701 @@ public class AccumulateTest extends BaseModelTest {
         List<Number> results = getObjectsIntoList(ksession, Number.class);
         assertEquals(1, results.size());
         assertEquals(5, results.get(0).intValue());
+    }
+
+    @Test
+    public void testFalseNodeSharing() {
+        // DROOLS-5686
+        String str =
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "rule R1 when\n" +
+                "  accumulate (\n" +
+                "       Person($var : age), $sum : sum( $var ) " +
+                "         )" +
+                "then\n" +
+                "  insert($sum);\n" +
+                "end\n" +
+                "rule R2 when\n" +
+                "  accumulate (\n" +
+                "       Person($var : name.length), $sum : sum( $var ) " +
+                "         )" +
+                "then\n" +
+                "  insert(\"\" + $sum);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        ksession.insert( new Person( "Mario", 46 ) );
+        ksession.insert( new Person( "Mark", 44 ) );
+        ksession.insert( new Person( "Luca", 36 ) );
+
+        ksession.fireAllRules();
+
+        List<Number> resultsInt = getObjectsIntoList(ksession, Number.class);
+        assertEquals(1, resultsInt.size());
+        assertEquals(126, resultsInt.get(0).intValue());
+
+        List<String> resultsString = getObjectsIntoList(ksession, String.class);
+        assertEquals(1, resultsString.size());
+        assertEquals("13", resultsString.get(0));
+    }
+
+    @Test
+    public void testAccumulateWithTwoFunctions1() {
+        // DROOLS-5752
+        String str = "import java.time.Duration;\n" +
+                "import " + Shift.class.getCanonicalName() + ";\n" +
+                "rule \"R1\"\n" +
+                "    when\n" +
+                "        accumulate(\n" +
+                "            $other : Shift(\n" +
+                "                $shiftStart : startDateTime\n" +
+                "            ),\n" +
+                "            $shiftCount : count($other),\n" +
+                "            $totalMinutes : sum(Duration.between($shiftStart, $shiftStart).toMinutes())\n" +
+                "        )\n" +
+                "    then\n" +
+                "        System.out.println($shiftCount + \" \" + $totalMinutes);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        ksession.insert( new Shift( OffsetDateTime.now()) );
+
+        Assertions.assertThat(ksession.fireAllRules()).isEqualTo(1);
+    }
+
+    @Test
+    public void testAccumulateWithTwoFunctions2() {
+        // DROOLS-5752
+        String str = "import java.time.Duration;\n" +
+                "import " + Shift.class.getCanonicalName() + ";\n" +
+                "rule \"R1\"\n" +
+                "    when\n" +
+                "        accumulate(\n" +
+                "            $other : Shift(\n" +
+                "                $shiftStart : startDateTime\n" +
+                "            ),\n" +
+                "            $totalMinutes : sum(Duration.between($shiftStart, $shiftStart).toMinutes()),\n" +
+                "            $shiftCount : count($other)\n" +
+                "        )\n" +
+                "    then\n" +
+                "        System.out.println($shiftCount + \" \" + $totalMinutes);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        ksession.insert( new Shift( OffsetDateTime.now()) );
+
+        Assertions.assertThat(ksession.fireAllRules()).isEqualTo(1);
+    }
+
+    public class Shift {
+
+        private final AtomicLong lengthInMinutes = new AtomicLong(-1);
+        private OffsetDateTime startDateTime;
+
+        private String employee = null;
+
+        public Shift(OffsetDateTime startDateTime) {
+            this.startDateTime = startDateTime;
+        }
+
+        @Override
+        public String toString() {
+            return startDateTime.toString();
+        }
+
+        public long getLengthInMinutes() { // Thread-safe cache.
+            long currentLengthInMinutes = lengthInMinutes.get();
+            if (currentLengthInMinutes >= 0) {
+                return currentLengthInMinutes;
+            }
+            long newLengthInMinutes = startDateTime.until(startDateTime, ChronoUnit.MINUTES);
+            lengthInMinutes.set(newLengthInMinutes);
+            return newLengthInMinutes;
+        }
+
+        public OffsetDateTime getStartDateTime() {
+            return startDateTime;
+        }
+
+        public void setStartDateTime(OffsetDateTime startDateTime) {
+            this.startDateTime = startDateTime;
+            this.lengthInMinutes.set(-1);
+        }
+
+        public String getEmployee() {
+            return employee;
+        }
+
+        public void setEmployee(String employee) {
+            this.employee = employee;
+        }
+
+        public OffsetDateTime getEndDateTime() {
+            // Pretend a shift length is always 8 hours.
+            return startDateTime.plus(8, ChronoUnit.HOURS);
+        }
+    }
+
+    public static Duration between(OffsetDateTime start, OffsetDateTime end) {
+        return Duration.between(start, end);
+    }
+
+    @Test
+    public void testAccumulateNumberFromSum() {
+        String str =
+                "import " + Shift.class.getCanonicalName() + ";"
+                        + "import " + AccumulateTest.class.getCanonicalName() + ";"
+                        + "import " + Result.class.getCanonicalName() + ";"
+                        + "rule \"dailyMinutes\"\n"
+                        + "    when\n"
+                        + "        accumulate(\n"
+                        + "            $other : Shift(\n"
+                        + "                $shiftStart : startDateTime,\n"
+                        + "                $shiftEnd : endDateTime\n"
+                        + "            ),\n"
+                        + "            $shiftCount : count($other),\n"
+                        + "            $totalMinutes : sum(AccumulateTest.between($shiftStart, $shiftEnd).toMinutes())\n"
+                        + "        )\n"
+                        + "        Number(this > 0) from $totalMinutes\n"
+                        + "    then\n"
+                        + "        insert(new Result($totalMinutes));\n"
+                        + "end";
+
+
+
+        KieSession ksession = getKieSession( str );
+
+        Shift shift = new Shift(OffsetDateTime.now());
+
+        ksession.insert(shift);
+
+        ksession.fireAllRules();
+
+        Collection<Result> results = getObjectsIntoList(ksession, Result.class);
+        assertEquals(1, results.size());
+        assertEquals(8 * 60L, results.iterator().next().getValue());
+    }
+
+    private static int switchMachinesInAssignments(KieSession session, MrProcessAssignment left,
+                                                   MrProcessAssignment right) {
+        FactHandle leftHandle = session.getFactHandle(left);
+        FactHandle rightHandle = session.getFactHandle(right);
+        MrMachine original = left.getMachine();
+        left.setMachine(right.getMachine());
+        right.setMachine(original);
+        session.update(leftHandle, left);
+        session.update(rightHandle, right);
+        return session.fireAllRules();
+    }
+
+    @Test
+    public void testDoubleAccumulateNPE() {
+        // Prepare reproducing data.
+        MrMachine machine2 = new MrMachine();
+        MrMachine machine3 = new MrMachine();
+        MrProcessAssignment assignment1 = new MrProcessAssignment(new MrProcess(), machine3, machine3);
+        MrProcessAssignment assignment2 = new MrProcessAssignment(new MrProcess(), machine2, machine2);
+        MrProcessAssignment assignment3 = new MrProcessAssignment(new MrProcess(), machine2, machine2);
+        MrProcessAssignment assignment4 = new MrProcessAssignment(new MrProcess(), machine3, machine3);
+
+        String rule = "import " + MrProcessAssignment.class.getCanonicalName() + ";\n" +
+                "import " + List.class.getCanonicalName() + ";\n" +
+                "global java.util.List result;\n" +
+                "rule R1\n" +
+                "when\n" +
+                "   $assignments: List(size > 0) from accumulate(\n" +
+                "        $a: MrProcessAssignment(machine != null, this.isMoved() == true),\n" +
+                "        collectList($a)\n" +
+                "   )\n" +
+                "    accumulate(\n" +
+                "        $a2: MrProcessAssignment() from $assignments,\n" +
+                "        $count: count($a2)\n" +
+                "    )\n" +
+                "then\n" +
+                "    result.add($count);\n" +
+                "end;";
+        KieSession kieSession = getKieSession(rule);
+        List<Long> result = new ArrayList<>();
+        kieSession.setGlobal("result", result);
+
+        // Insert facts into the session.
+        kieSession.insert(assignment1);
+        kieSession.insert(assignment2);
+        kieSession.insert(assignment3);
+        kieSession.insert(assignment4);
+        int fired = kieSession.fireAllRules();
+        assertEquals(0, fired);
+        assertTrue(result.isEmpty());
+
+        // Execute the sequence of session events that triggers the exception.
+        fired = switchMachinesInAssignments(kieSession, assignment1, assignment2);
+        assertEquals(1, fired);
+        assertEquals(2, result.get(0).longValue());
+        result.clear();
+
+        fired = switchMachinesInAssignments(kieSession, assignment1, assignment2);
+        assertEquals(0, fired);
+        assertTrue(result.isEmpty());
+
+        fired = switchMachinesInAssignments(kieSession, assignment4, assignment3);
+        assertEquals(1, fired);
+        assertEquals(2, result.get(0).longValue());
+        result.clear();
+
+        kieSession.dispose();
+    }
+
+    public static class MrProcess {
+
+    }
+
+    public static class MrProcessAssignment {
+
+        private MrProcess process;
+        private MrMachine originalMachine;
+        private MrMachine machine;
+
+        public MrProcessAssignment(MrProcess process, MrMachine originalMachine, MrMachine machine) {
+            this.process = process;
+            this.originalMachine = originalMachine;
+            this.machine = machine;
+        }
+
+        public MrProcess getProcess() {
+            return process;
+        }
+
+        public MrMachine getOriginalMachine() {
+            return originalMachine;
+        }
+
+        public MrMachine getMachine() {
+            return machine;
+        }
+
+        public void setMachine(MrMachine machine) {
+            this.machine = machine;
+        }
+
+        // ************************************************************************
+        // Complex methods
+        // ************************************************************************
+
+        public boolean isMoved() {
+            if (machine == null) {
+                return false;
+            }
+            return !Objects.equals(originalMachine, machine);
+        }
+
+    }
+
+    public static class MrMachine {
+
+    }
+
+    @Test
+    public void testInlineAccumulateWithAnd() {
+        // RHDM-1549
+        String str =
+                "import " + Car.class.getCanonicalName() + ";" +
+                        "import " + Order.class.getCanonicalName() + ";" +
+                        "import " + BigDecimal.class.getCanonicalName() + ";" +
+                        "global java.util.List result;\n" +
+                        "rule R when\n" +
+                        "        $total : BigDecimal() from accumulate( $car : Car( discontinued == true ) and Order( item == $car, $price : price ),\n" +
+                        "                                               init( BigDecimal total = BigDecimal.ZERO; ),\n" +
+                        "                                               action( total = total.add( $price ); ),\n" +
+                        "                                               reverse( total = total.subtract( $price ); ),\n" +
+                        "                                               result( total ) )\n" +
+                        "    then\n" +
+                        "        result.add($total);\n" +
+                        "end";
+
+        KieSession ksession = getKieSession( str );
+
+        List<BigDecimal> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        Car a = new Car("A180");
+        a.setDiscontinued(false);
+        ksession.insert(a);
+
+        for (int i = 0; i < 10; i++) {
+            Order order = new Order(a, new BigDecimal(30000));
+            ksession.insert(order);
+        }
+
+        Car c = new Car("C180");
+        c.setDiscontinued(true);
+        ksession.insert(c);
+
+        for (int i = 0; i < 5; i++) {
+            Order order = new Order(c, new BigDecimal(45000));
+            ksession.insert(order);
+        }
+
+        ksession.fireAllRules();
+
+        assertEquals( 1, result.size() );
+        assertEquals( new BigDecimal( 225000 ), result.get(0) );
+
+        ksession.dispose();
+    }
+
+    @Test
+    public void testInlineMvelAccumulateWithAnd() {
+        // RHDM-1549
+        String str =
+                "import " + Car.class.getCanonicalName() + ";" +
+                "import " + Order.class.getCanonicalName() + ";" +
+                "import " + BigDecimal.class.getCanonicalName() + ";" +
+                "global java.util.List result;\n" +
+                "dialect \"mvel\"\n" +
+                "rule R when\n" +
+                "        $total : BigDecimal() from accumulate( $car : Car( discontinued == true ) and Order( item == $car, $price : price ),\n" +
+                "                                               init( BigDecimal total = BigDecimal.ZERO; ),\n" +
+                "                                               action( total += $price; ),\n" +
+                "                                               reverse( total -= $price; ),\n" +
+                "                                               result( total ) )\n" +
+                "    then\n" +
+                "        result.add($total);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        List<BigDecimal> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        Car a = new Car("A180");
+        a.setDiscontinued(false);
+        ksession.insert(a);
+
+        for (int i = 0; i < 10; i++) {
+            Order order = new Order(a, new BigDecimal(30000));
+            ksession.insert(order);
+        }
+
+        Car c = new Car("C180");
+        c.setDiscontinued(true);
+        ksession.insert(c);
+
+        for (int i = 0; i < 5; i++) {
+            Order order = new Order(c, new BigDecimal(45000));
+            ksession.insert(order);
+        }
+
+        ksession.fireAllRules();
+
+        assertEquals( 1, result.size() );
+        assertEquals( new BigDecimal( 225000 ), result.get(0) );
+
+        ksession.dispose();
+    }
+
+    public static class Car {
+        private String name = "";
+        private String variant = "";
+        private BigDecimal totalSales = BigDecimal.ZERO;
+        private boolean discontinued = false;
+
+        public Car() { }
+
+        public Car(String name) {
+            this.name = name;
+        }
+
+        public Car(String name, String variant) {
+            this.name = name;
+            this.variant = variant;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getVariant() {
+            return variant;
+        }
+
+        public void setVariant(String variant) {
+            this.variant = variant;
+        }
+
+        public BigDecimal getTotalSales() {
+            return totalSales;
+        }
+
+        public void setTotalSales(BigDecimal totalSales) {
+            this.totalSales = totalSales;
+        }
+
+        public boolean getDiscontinued() {
+            return discontinued;
+        }
+
+        public void setDiscontinued(boolean discontinued) {
+            this.discontinued = discontinued;
+        }
+
+        public String toString() {
+            return (name + " " + variant).trim();
+        }
+    }
+
+    public static class Order {
+        private Car item;
+        private BigDecimal price;
+
+        public Order() { }
+
+        public Order(Car item, BigDecimal price) {
+            this.item = item;
+            this.price = price;
+        }
+
+        public Car getItem() {
+            return item;
+        }
+
+        public void setItem(Car item) {
+            this.item = item;
+        }
+
+        public BigDecimal getPrice() {
+            return price;
+        }
+
+        public void setPrice(BigDecimal price) {
+            this.price = price;
+        }
+    }
+
+    @Test
+    public void testAccumulateOnPartiallyReversibleFunction() {
+        // DROOLS-5930
+        String str =
+                "import accumulate " + CountingIntegerMaxAccumulateFunction.class.getCanonicalName() + " countingMax;\n" +
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "global java.util.List result;\n" +
+                "rule R when\n" +
+                "  accumulate ( Person($age : age), $max : countingMax( $age ) )" +
+                "then\n" +
+                "  result.add($max);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        CountingIntegerMaxAccumulateFunction accFunction = CountingIntegerMaxAccumulateFunction.INSTANCE;
+
+        List<Integer> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        Person mario = new Person( "Mario", 46 );
+
+        FactHandle marioFH = ksession.insert( mario );
+        FactHandle markFH = ksession.insert( new Person( "Mark", 42 ) );
+        FactHandle lucaFH = ksession.insert( new Person( "Luca", 36 ) );
+
+        ksession.fireAllRules();
+        assertEquals(1, result.size());
+        assertEquals(46, result.get(0).intValue());
+        assertEquals(3, accFunction.getAccumulateCount());
+
+        result.clear();
+        accFunction.resetAccumulateCount();
+
+        // this shouldn't trigger any reaccumulate
+        ksession.delete( markFH );
+
+        ksession.fireAllRules();
+        assertEquals(1, result.size());
+        assertEquals(46, result.get(0).intValue());
+        assertEquals(0, accFunction.getAccumulateCount());
+
+        result.clear();
+        accFunction.resetAccumulateCount();
+
+        mario.setAge( 18 );
+        ksession.update( marioFH, mario );
+
+        ksession.fireAllRules();
+        assertEquals(1, result.size());
+        assertEquals(36, result.get(0).intValue());
+        assertEquals(2, accFunction.getAccumulateCount());
+    }
+
+    public static class CountingIntegerMaxAccumulateFunction extends IntegerMaxAccumulateFunction {
+        public static CountingIntegerMaxAccumulateFunction INSTANCE;
+
+        private int counter = 0;
+
+        public CountingIntegerMaxAccumulateFunction() {
+            INSTANCE = this;
+        }
+
+        @Override
+        public void accumulate( MaxData data, Object value ) {
+            super.accumulate( data, value );
+            counter++;
+        }
+
+        public int getAccumulateCount() {
+            return counter;
+        }
+
+        public void resetAccumulateCount() {
+            counter = 0;
+        }
+    }
+
+    @Test
+    public void testOneAccumulateOnPattern() {
+        // DROOLS-5938
+        String str =
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "import " + Collection.class.getCanonicalName() + ";\n" +
+                "global java.util.List result;\n" +
+                "rule R when\n" +
+                "  $acc1 : Collection() from accumulate( \n" +
+                "    $p : Person( ), collectSet( $p ) ) \n" +
+                "then\n" +
+                "  result.add($acc1.iterator().next());" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        List<Integer> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        Person lukas = new Person("Lukas", 35);
+        ksession.insert(lukas);
+        ksession.fireAllRules();
+
+        System.out.println(result);
+
+        assertEquals(1, result.size());
+        assertEquals(lukas, result.get(0));
+    }
+
+    @Test
+    public void testOneAccumulateOnPatternWithVarBinding() {
+        // DROOLS-5938
+        String str =
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "import " + Collection.class.getCanonicalName() + ";\n" +
+                "global java.util.List result;\n" +
+                "rule R when\n" +
+                "  $acc1 : Collection() from accumulate( \n" +
+                "    $p : Person( $name : name ), collectSet( $p ) ) \n" +
+                "then\n" +
+                "  result.add($acc1.iterator().next());" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        List<Integer> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        Person lukas = new Person("Lukas", 35);
+        ksession.insert(lukas);
+        ksession.fireAllRules();
+
+        System.out.println(result);
+
+        assertEquals(1, result.size());
+        assertEquals(lukas, result.get(0));
+    }
+
+    @Test
+    public void testTwoAccumulatesOnPattern() {
+        // DROOLS-5938
+        String str =
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                        "import " + Pair.class.getCanonicalName() + ";\n" +
+                        "import " + Collection.class.getCanonicalName() + ";\n" +
+                        "global java.util.List result;\n" +
+                        "rule R when\n" +
+                        "  $acc1 : Collection() from accumulate( \n" +
+                        "    Person( $pair1 : Pair.create(name, age) ), collectSet( $pair1 ) ) \n" +
+                        "  $acc2 : Collection() from accumulate( \n" +
+                        "    $pair2 : Pair( ) from $acc1, collectSet( $pair2 ) )\n" +
+                        "then\n" +
+                        "  result.add($acc2.iterator().next());" +
+                        "end";
+
+        KieSession ksession = getKieSession( str );
+
+        List<Pair> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        ksession.insert(new Person("Lukas", 35));
+        ksession.fireAllRules();
+
+        assertEquals(1, result.size());
+        assertEquals(Pair.create("Lukas", 35), result.get(0));
+    }
+
+    @Test
+    public void testTwoAccumulatesOnPatternWithVarBinding() {
+        // DROOLS-5938
+        String str =
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "import " + Pair.class.getCanonicalName() + ";\n" +
+                "import " + Collection.class.getCanonicalName() + ";\n" +
+                "global java.util.List result;\n" +
+                "rule R when\n" +
+                "  $acc1 : Collection() from accumulate( \n" +
+                "    Person( $pair1 : Pair.create(name, age) ), collectSet( $pair1 ) ) \n" +
+                "  $acc2 : Collection() from accumulate( \n" +
+                "    $pair2 : Pair( $k : key ) from $acc1, collectSet( $pair2 ) )\n" +
+                "then\n" +
+                "  result.add($acc2.iterator().next());" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        List<Integer> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        ksession.insert(new Person("Lukas", 35));
+        ksession.fireAllRules();
+
+        System.out.println(result);
+
+        assertEquals(1, result.size());
+        assertEquals(Pair.create("Lukas", 35), result.get(0));
+    }
+
+    @Test
+    public void testBindingOrderWithInlineAccumulate() {
+        // RHDM-1551
+        String str =
+                "import " + Aclass.class.getCanonicalName() + ";\n" +
+                "import " + Bclass.class.getCanonicalName() + ";\n" +
+                "import " + Cclass.class.getCanonicalName() + ";\n" +
+                "import " + Dclass.class.getCanonicalName() + ";\n" +
+                "global java.util.List result;\n" +
+                "import java.util.List\n" +
+                "import java.util.Set\n" +
+                "import java.util.Map\n" +
+                "import java.util.HashMap\n" +
+                "\n" +
+                "dialect \"java\"\n" +
+                "\n" +
+                "rule \"rule5a\"\n" +
+                "    when\n" +
+                "        $b : Bclass()\n" +
+                "        $c : Cclass()\n" +
+                "        $d : Dclass()\n" +
+                "        $eSet : Set() from accumulate( $a : Aclass(),\n" +
+                "                                       init( Map map = new HashMap(); ),\n" +
+                "                                       action( $a.method(map, $b, $c, $d); ),\n" +
+                "                                       result( map.keySet() ) )\n" +
+                "    then\n" +
+                "        result.add($eSet.iterator().next());" +
+                "end";
+
+        KieSession kSession = getKieSession( str );
+
+        List<String> result = new ArrayList<>();
+        kSession.setGlobal("result", result);
+
+        kSession.insert(new Aclass("A180"));
+        kSession.insert(new Bclass("B180"));
+        kSession.insert(new Cclass("C200"));
+        kSession.insert(new Dclass("D250"));
+
+        assertEquals( 1, kSession.fireAllRules() );
+        assertEquals( 1, result.size() );
+        assertEquals( "B180", result.get(0) );
+
+        kSession.dispose();
+    }
+
+    @Test
+    public void testBindingOrderWithInlineAccumulateAndLists() {
+        // RHDM-1551
+        String str =
+                "import " + Aclass.class.getCanonicalName() + ";\n" +
+                "import " + Bclass.class.getCanonicalName() + ";\n" +
+                "import " + Cclass.class.getCanonicalName() + ";\n" +
+                "import " + Dclass.class.getCanonicalName() + ";\n" +
+                "global java.util.List result;\n" +
+                "import java.util.List\n" +
+                "import java.util.Set\n" +
+                "import java.util.Map\n" +
+                "import java.util.HashMap\n" +
+                "\n" +
+                "dialect \"java\"\n" +
+                "\n" +
+                "rule \"rule5a\"\n" +
+                "    when\n" +
+                "        $bList : List() from collect( Bclass() )\n" +
+                "        $cList : List() from collect( Cclass() )\n" +
+                "        $dList : List() from collect( Dclass() )\n" +
+                "        $eSet : Set() from accumulate( $a : Aclass(),\n" +
+                "                                       init( Map map = new HashMap(); ),\n" +
+                "                                       action( $a.methodOnList(map, $bList, $cList, $dList); ),\n" +
+                "                                       result( map.keySet() ) )\n" +
+                "    then\n" +
+                "        result.add($eSet.iterator().next());" +
+                "end";
+
+        KieSession kSession = getKieSession( str );
+
+        List<String> result = new ArrayList<>();
+        kSession.setGlobal("result", result);
+
+        kSession.insert(new Aclass("A180"));
+        kSession.insert(new Bclass("B180"));
+        kSession.insert(new Cclass("C200"));
+        kSession.insert(new Dclass("D250"));
+
+        assertEquals( 1, kSession.fireAllRules() );
+        assertEquals( 1, result.size() );
+        assertEquals( "B180", result.get(0) );
+
+        kSession.dispose();
+    }
+
+    @Test
+    public void testBindingOrderWithInlineAccumulateAndListsAndFrom() {
+        // RHDM-1551
+        String str =
+                "import " + Aclass.class.getCanonicalName() + ";\n" +
+                "import " + Bclass.class.getCanonicalName() + ";\n" +
+                "import " + Cclass.class.getCanonicalName() + ";\n" +
+                "import " + Dclass.class.getCanonicalName() + ";\n" +
+                "global java.util.List result;\n" +
+                "import java.util.List\n" +
+                "import java.util.Set\n" +
+                "import java.util.Map\n" +
+                "import java.util.HashMap\n" +
+                "\n" +
+                "dialect \"java\"\n" +
+                "\n" +
+                "rule \"rule5a\"\n" +
+                "    when\n" +
+                "        $aList : List() from collect( Aclass() )\n" +
+                "        $bList : List() from collect( Bclass() )\n" +
+                "        $cList : List() from collect( Cclass() )\n" +
+                "        $dList : List() from collect( Dclass() )\n" +
+                "        $eSet : Set() from accumulate( $a : Aclass() from $aList,\n" +
+                "                                       init( Map map = new HashMap(); ),\n" +
+                "                                       action( $a.methodOnList(map, $bList, $cList, $dList); ),\n" +
+                "                                       result( map.keySet() ) )\n" +
+                "    then\n" +
+                "        result.add($eSet.iterator().next());" +
+                "end";
+
+        KieSession kSession = getKieSession( str );
+
+        List<String> result = new ArrayList<>();
+        kSession.setGlobal("result", result);
+
+        kSession.insert(new Aclass("A180"));
+        kSession.insert(new Bclass("B180"));
+        kSession.insert(new Cclass("C200"));
+        kSession.insert(new Dclass("D250"));
+
+        assertEquals( 1, kSession.fireAllRules() );
+        assertEquals( 1, result.size() );
+        assertEquals( "B180", result.get(0) );
+
+        kSession.dispose();
+    }
+
+    public static class Aclass {
+        private String name;
+
+        public Aclass() { }
+
+        public Aclass(String name) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public void method(Map map, Bclass b, Cclass c, Dclass d) {
+            map.put(b.getName(), c.getName());
+        }
+
+        public void methodOnList(Map map, Collection<Bclass> bs, Collection<Cclass> cs, Collection<Dclass> ds) {
+            map.put( bs.iterator().next().getName(), cs.iterator().next().getName());
+        }
+    }
+
+    public static class Bclass {
+        private String name;
+
+        public Bclass() { }
+
+        public Bclass(String name) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+    }
+
+    public static class Cclass {
+        private String name;
+
+        public Cclass() { }
+
+        public Cclass(String name) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+    }
+
+    public static class Dclass {
+        private String name;
+
+        public Dclass() { }
+
+        public Dclass(String name) {
+            this.name = name;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+    }
+
+    @Test
+    public void testMultiAccumulate() {
+        // RHDM-1572
+        String str =
+                "global java.util.List result;\n" +
+                "rule R when\n" +
+                "    accumulate ( $s : String( $name : toString, $length : length );\n" +
+                "                 $count : count($name),\n" +
+                "                 $sum : sum($length),\n" +
+                "                 $list : collectList($s) )\n" +
+                "    then\n" +
+                "        result.add($count);\n" +
+                "        result.add($sum);\n" +
+                "        result.addAll($list);\n" +
+                "end";
+
+        KieSession kSession = getKieSession( str );
+
+        List<Object> result = new ArrayList<>();
+        kSession.setGlobal( "result", result );
+
+        kSession.insert( "test" );
+        kSession.insert( "mytest" );
+        kSession.insert( "anothertest" );
+
+        assertEquals( 1, kSession.fireAllRules() );
+        assertEquals( 5, result.size() );
+        assertEquals( 3L, result.get( 0 ) );
+        assertEquals( 21, result.get( 1 ) );
+        assertTrue( result.contains( "test" ) );
+        assertTrue( result.contains( "mytest" ) );
+        assertTrue( result.contains( "anothertest" ) );
+
+        kSession.dispose();
+    }
+
+    @Test
+    public void testAccumulateWithExists() {
+        // RHDM-1571
+        String str =
+                "import " + Car.class.getCanonicalName() + ";" +
+                "import " + Aclass.class.getCanonicalName() + ";" +
+                "global java.util.List result;\n" +
+                "rule R when\n" +
+                "        $list : List() from accumulate ( $car : Car( $name : name )\n" +
+                "                                         and exists Aclass( name == $name );\n" +
+                "                                         collectList($car) )\n" +
+                "    then\n" +
+                "        result.addAll($list);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        List<Car> result = new ArrayList<>();
+        ksession.setGlobal( "result", result );
+
+        ksession.insert(new Car("A180"));
+        ksession.insert(new Aclass("A180"));
+        ksession.insert(new Aclass("A180"));
+        ksession.insert(new Aclass("A180"));
+
+        assertEquals( 1, ksession.fireAllRules() );
+        assertEquals( 1, result.size() );
+        assertEquals( "A180", result.get(0).getName() );
+
+        ksession.dispose();
+    }
+
+    @Test
+    public void testAccumulateWithForAll() {
+        // DROOLS-6025
+        String str =
+                "import " + GrandChild.class.getCanonicalName() + ";\n" +
+                "import " + GrandParent.class.getCanonicalName() + ";\n" +
+                "rule R1 when\n" +
+                "        accumulate ( " +
+                "        $gp: GrandParent() and\n" +
+                "        forall( $gc: GrandChild( ) from $gp.grandChild " +
+                "                GrandChild( this == $gc, name == \"A\" ) );\n" +
+                "        $count : count())\n" +
+                "    then\n" +
+                "        System.out.println(\"exec \" + $count);\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( str );
+
+        GrandParent grandParent = new GrandParent();
+        GrandChild grandChild = new GrandChild();
+        grandChild.setName("A");
+        grandParent.setGrandChild( Collections.singletonList( grandChild ));
+
+        ksession.insert(grandParent);
+        assertEquals( 1, ksession.fireAllRules() );
+    }
+
+    public static class GrandChild {
+
+        private String name;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+    }
+
+    public static class GrandParent {
+        private List<GrandChild> grandChild;
+
+        public List<GrandChild> getGrandChild() {
+            return grandChild;
+        }
+
+        public void setGrandChild(List<GrandChild> grandChild) {
+            this.grandChild = grandChild;
+        }
+    }
+
+    @Test
+    public void testAccumulateSubnetworkEval() {
+        // DROOLS-6228
+        String str =
+                "import java.time.Duration;\n" +
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "global " + AtomicReference.class.getCanonicalName() + " holder;\n" +
+                "rule \"R1\"\n" +
+                "    when\n" +
+                "        $g : String()\n" +
+                "        accumulate(\n" +
+                "            ($p : Person( $age: age > 30) and eval($g.equals(\"go\"))),\n" +
+                "            $sum : sum($age)\n" +
+                "        )\n" +
+                "    then\n" +
+                "        holder.set((int)holder.get() + $sum);\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+        AtomicReference<Integer> holder = new AtomicReference<>(0);
+        ksession.setGlobal("holder", holder);
+
+        FactHandle s = ksession.insert("stop");
+        FactHandle fh1 = ksession.insert( new Person("name1", 40));
+        FactHandle fh2 = ksession.insert( new Person("name2", 40));
+        FactHandle fh3 = ksession.insert( new Person("name3", 25));
+
+        Assertions.assertThat(ksession.fireAllRules()).isEqualTo(1);
+        assertEquals(0, (int)holder.get());
+    }
+
+    @Test
+    public void testInnerClassInAccumulatingFunction() {
+        // DROOLS-6238
+        String str =
+                "import java.util.*;\n" +
+                        "import " + GroupByAccPersonSet.class.getCanonicalName() + ";\n" +
+                        "import " + GroupByAccSetSize.class.getCanonicalName() + ";\n" +
+                        "import " + Person.class.getCanonicalName() + ";\n" +
+                        "rule R when\n" +
+                        "  $sets : List( size > 0 ) from accumulate (\n" +
+                        "            Person($p: this),\n" +
+                        "                init( GroupByAccPersonSet acc = new GroupByAccPersonSet(); ),\n" +
+                        "                action( acc.action( $p ); ),\n" +
+                        "                reverse( acc.reverse( $p ); ),\n" +
+                        "                result( acc.result() )\n" +
+                        "         )\n" +
+                        "  $sizes : List( size > 0 ) from accumulate (\n" +
+                        "            Object($s: this) from $sets,\n" +
+                        "                init( GroupByAccSetSize acc2 = new GroupByAccSetSize(); ),\n" +
+                        "                action( acc2.action( (Set) $s ); ),\n" +
+                        "                reverse( acc2.reverse( (Set) $s ); ),\n" +
+                        "                result( acc2.result() )\n" +
+                        "         )\n" +
+                        "then\n" +
+                        "end";
+
+        KieSession ksession = getKieSession(str);
+
+        ksession.insert(new Person("Mark", 42));
+        ksession.insert(new Person("Edson", 38));
+        assertEquals( 1, ksession.fireAllRules() );
+    }
+
+    public static class GroupByAccPersonSet {
+        private final List<Person> nonUnique  = new ArrayList<>(0);
+
+        public GroupByAccPersonSet() {
+
+        }
+
+        public void action(Person person) {
+            nonUnique.add(person);
+        }
+
+        public void reverse(Person person) {
+            nonUnique.remove(person);
+        }
+
+        public List<Set<Person>> result() {
+            return Collections.singletonList(new HashSet<>(nonUnique));
+        }
+
+    }
+
+    public static class GroupByAccSetSize {
+        private final List<Integer> sizes = new ArrayList<>(0);
+
+        public GroupByAccSetSize() {
+
+        }
+
+        public void action(Set<Person> set) {
+            sizes.add(set.size());
+        }
+
+        public void reverse(Set<Person> set) {
+            sizes.add(set.size());
+        }
+
+        public List<Integer> result() {
+            Integer max = sizes.stream()
+                    .mapToInt(i -> i)
+                    .max()
+                    .orElse(0);
+            return Collections.singletonList(max);
+        }
+    }
+
+    @Test
+    public void testAccumulateWithSameBindingVariable() {
+        // DROOLS-6102
+        String str =
+                "import java.util.*;\n" +
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "global java.util.List list;" +
+                "rule R when\n" +
+                "   accumulate ( $p : Person( age < 40 ), $tot1 : count( $p ) ) \n" +
+                "   accumulate ( $p : Integer( this > 40 ), $tot2 : count( $p ) ) \n" +
+                "then\n" +
+                "  list.add( $tot1.intValue() ); \n" +
+                "  list.add( $tot2.intValue() ); \n" +
+                "end\n";
+
+        KieSession ksession = getKieSession(str);
+
+        List<Integer> list = new ArrayList<>();
+        ksession.setGlobal("list", list);
+
+        ksession.insert(47);
+        ksession.insert(42);
+        ksession.insert(new Person("Edson", 38));
+        assertEquals( 1, ksession.fireAllRules() );
+
+        assertEquals( 2, list.size() );
+        assertEquals( 1, (int) list.get(0) );
+        assertEquals( 2, (int) list.get(1) );
+    }
+
+    @Test
+    public void testAccumulateWithMaxCalendarNullDate() {
+        //DROOLS-4990
+        String str =
+                "import " + StockTick.class.getCanonicalName() + ";\n" +
+                        "rule AccumulateMaxDate\n" +
+                        "  dialect \"java\"\n" +
+                        "  when\n" +
+                        "  $max1 : Number() from accumulate(\n" +
+                        "    StockTick(isSetDueDate == true, $time : dueDate);\n" +
+                        "    max($time.getTime().getTime()))\n" +
+                        "then\n" +
+                        "end\n";
+
+        KieSession ksession = getKieSession(str);
+
+        StockTick st = new StockTick("RHT");
+        ksession.insert(st);
+        StockTick st2 = new StockTick("IBM");
+        st2.setDueDate(new GregorianCalendar(2020, Calendar.FEBRUARY, 4));
+        ksession.insert(st2);
+        Assertions.assertThat(ksession.fireAllRules()).isEqualTo(1);
+    }
+
+    @Test
+    public void testSubnetworkTuple() {
+        final String drl =
+                "import java.math.*; " +
+                        "import " + InputDataTypes.class.getCanonicalName() + "; " +
+                        "import " + ControlType.class.getCanonicalName() + "; " +
+                        "global java.util.List result; \n" +
+                        "rule \"AccumulateMinDate\" " +
+                        "	when " +
+                        "		$min : Number() from accumulate ( ControlType( booleanValue == false ) and InputDataTypes($dueDate : dueDate );" +
+                        "                                           min($dueDate.getTime().getTime())" +
+                        "                                         ) " +
+                        " " +
+                        "	then " +
+                        "		result.add($min); " +
+                        "end";
+
+        final KieSession ksession = getKieSession(drl);
+
+        List<Number> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        ControlType t1 = new ControlType(false);
+        ksession.insert(t1);
+
+        Calendar year2019 = calendarFromString("2019-11-06T16:00:00.00-07:00");
+        InputDataTypes i1 = new InputDataTypes(year2019);
+        ksession.insert(i1);
+
+        InputDataTypes i2 = new InputDataTypes(calendarFromString("2020-11-06T16:00:00.00-07:00"));
+        ksession.insert(i2);
+
+        try {
+            assertEquals(1, ksession.fireAllRules());
+            assertEquals(year2019.getTime().getTime(), result.iterator().next().longValue());
+        } finally {
+            ksession.dispose();
+        }
+    }
+
+    public static class InputDataTypes {
+
+        private Calendar dueDate;
+
+        public InputDataTypes(Calendar dueDate) {
+            this.dueDate = dueDate;
+        }
+
+        public Calendar getDueDate() {
+            return dueDate;
+        }
+
+        public void setDueDate(Calendar date) {
+            dueDate = date;
+        }
+    }
+
+    public static class ControlType {
+
+        private boolean booleanValue;
+
+        public ControlType(boolean booleanValue) {
+            this.booleanValue = booleanValue;
+        }
+
+        public void setBooleanValue(boolean booleanValue) {
+            this.booleanValue = booleanValue;
+        }
+
+        public boolean getBooleanValue() {
+            return booleanValue;
+        }
+    }
+
+    private GregorianCalendar calendarFromString(String inputString) {
+        return GregorianCalendar.from( ZonedDateTime.from( DateTimeFormatter.ISO_DATE_TIME.parse(inputString)));
+    }
+
+    @Test
+    public void testAccumulateCountWithExists() {
+//        The following rule uses an accumulate to count all the name Strings for which at least one Person
+//        of that name exists. Expected behavior:
+//        - A name should be counted exactly once no matter how many Persons with that name exists.
+//        - The rule should fire exactly once and there should be a single Result inserted.
+        String str = ""
+                + "import " + Person.class.getCanonicalName() + ";\n"
+                + "import " + Result.class.getCanonicalName() + ";\n"
+                + "rule countUsedNames when\n"
+                + "  accumulate(\n"
+                + "    $name : String()\n"
+                + "    and exists Person(name == $name);\n"
+                + "    $count : count($name)\n"
+                + "  )\n"
+                + "then\n"
+                + "  insert( new Result($count));\n"
+                + "  System.out.println(kcontext.getMatch().getObjects());\n"
+                + "end\n";
+        KieSession ksession = getKieSession( str );
+
+        ReteDumper.dumpRete(ksession);
+
+        ksession.insert("Andy"); // used 3x => counted 1x
+        ksession.insert("Bill"); // used 1x => counted 1x
+        ksession.insert("Carl"); // unused => not counted
+        ksession.insert(new Person("Andy", 1));
+        ksession.insert(new Person("Andy", 2));
+        ksession.insert(new Person("Andy", 3));
+        ksession.insert(new Person("Bill", 4));
+        ksession.insert(new Person("x", 8));
+        ksession.insert(new Person("y", 9));
+
+        ksession.fireAllRules();
+
+        Collection<Result> results = getObjectsIntoList(ksession, Result.class);
+        assertEquals(1, results.size());
+        assertEquals(2L, results.iterator().next().getValue());
+    }
+
+    @Test
+    public void testAccumulateWithIndirectArgument() {
+        String str =
+                "global java.util.List resultTotal; \n" +
+                        "global java.util.List resultPair; \n" +
+                        "import " + Person.class.getCanonicalName() + ";\n" +
+                        "import " + Pair.class.getCanonicalName() + ";\n" +
+                        "rule R " +
+                        "    when\n" +
+                        "        accumulate(\n" +
+                        "            Person($n1 : name)\n" +
+                        "            and Person($n2 : name);\n" +
+                        "            $pair :  collectList(Pair.create($n1, $n2)), \n" +
+                        "            $total : count(Pair.create($n1, $n2))\n" +
+                        "        )\n" +
+                        "    then\n" +
+                        "        resultTotal.add($total);\n" +
+                        "        resultPair.add($pair);\n" +
+                        "end";
+
+        KieSession ksession = getKieSession( str );
+
+        final List<Number> resultTotal = new ArrayList<>();
+        ksession.setGlobal("resultTotal", resultTotal);
+
+        final List<List<Pair>> resultPair = new ArrayList<>();
+        ksession.setGlobal("resultPair", resultPair);
+
+        Person mario = new Person("Mario", 40);
+        ksession.insert(mario);
+
+        int rulesFired = ksession.fireAllRules();
+        Assertions.assertThat(rulesFired).isGreaterThan(0);
+        Assertions.assertThat(resultTotal).contains(1l);
+
+        List<Pair> resultPairItem = resultPair.iterator().next();
+        Pair firstPair = resultPairItem.iterator().next();
+        assertEquals("Mario", firstPair.getFirst());
+        assertEquals("Mario", firstPair.getSecond());
+    }
+
+    @Test
+    public void testVariableWithMethodCallInAccFunc() {
+        final String str = "package org.drools.mvel.compiler\n" +
+                "import " + ControlFact.class.getCanonicalName() + ";" +
+                "import " + Payment.class.getCanonicalName() + ";" +
+                "rule r1\n" +
+                "when\n" +
+                "    Payment( $dueDate : dueDate)\n" +
+                "    Number( longValue == $dueDate.getTime().getTime() ) from accumulate (" +
+                "      ControlFact( $todaysDate : todaysDate )" +
+                "      and\n" +
+                "      Payment( $dueDate_acc : dueDate, eval($dueDate_acc.compareTo($todaysDate) <= 0) )\n" +
+                "      ;max($dueDate_acc.getTime().getTime())\n" +
+                "    )\n" +
+                "then\n" +
+                "end\n";
+
+        System.out.println(str);
+
+        KieSession ksession = getKieSession(str);
+
+        final Payment payment = new Payment();
+        payment.setDueDate(Calendar.getInstance());
+
+        final ControlFact controlFact = new ControlFact();
+        controlFact.setTodaysDate(Calendar.getInstance());
+
+        ksession.insert(controlFact);
+        ksession.insert(payment);
+        final int rules = ksession.fireAllRules();
+        assertEquals(1, rules);
+    }
+
+    @Test
+    public void testVariableWithMethodCallInAccFuncSimple() {
+        final String str = "package org.drools.mvel.compiler\n" +
+                "import " + FactA.class.getCanonicalName() + ";" +
+                "rule r1\n" +
+                "when\n" +
+                "    Number(  ) from accumulate (" +
+                "      FactA( $valueA : value, $valueA > 0 )\n" +
+                "      ;max($valueA.intValue())\n" +
+                "    )\n" +
+                "then\n" +
+                "end\n";
+
+        System.out.println(str);
+
+        KieSession ksession = getKieSession(str);
+
+        final FactA factA = new FactA();
+        factA.setValue(1);
+
+        ksession.insert(factA);
+        final int rules = ksession.fireAllRules();
+        assertEquals(1, rules);
+    }
+
+    public static class ControlFact {
+
+        private Calendar todaysDate;
+
+        public Calendar getTodaysDate() {
+            return todaysDate;
+        }
+
+        public void setTodaysDate(Calendar todaysDate) {
+            this.todaysDate = todaysDate;
+        }
+    }
+
+    public static class Payment {
+
+        private Calendar dueDate;
+
+        public Calendar getDueDate() {
+            return dueDate;
+        }
+
+        public void setDueDate(Calendar dueDate) {
+            this.dueDate = dueDate;
+        }
+    }
+
+    public static class FactA {
+
+        private Integer value;
+
+        public Integer getValue() {
+            return value;
+        }
+
+        public void setValue(Integer value) {
+            this.value = value;
+        }
+    }
+
+    @Test
+    public void testAccumulateOnTwoPatterns() {
+        // DROOLS-5738
+        String str =
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                        "rule R1 when\n" +
+                        "  accumulate (\n" +
+                        "       $p1: Person() and $p2: Person( age > $p1.age ), $sum : sum(Person.sumAges($p1, $p2)) " +
+                        "         )" +
+                        "then\n" +
+                        "  insert($sum);\n" +
+                        "end\n";
+
+        KieSession ksession = getKieSession( str );
+
+        ksession.insert( new Person( "Mario", 46 ) );
+        ksession.insert( new Person( "Mark", 44 ) );
+
+        ksession.fireAllRules();
+
+        List<Number> results = getObjectsIntoList(ksession, Number.class);
+        assertEquals( 1, results.size() );
+        assertEquals( 90, results.get(0) );
+    }
+  
+    @Test
+    public void testPositionalAccumulate() {
+        // DROOLS-6128
+        String str =
+                "import " + Result.class.getCanonicalName() + ";" +
+                "declare Person\n" +
+                "    name : String \n" +
+                "    age : int \n" +
+                "end" +
+                "\n" +
+                "rule Init when\n" +
+                "then\n" +
+                "  insert(new Person(\"Mark\", 37));\n" +
+                "  insert(new Person(\"Edson\", 35));\n" +
+                "  insert(new Person(\"Mario\", 40));\n" +
+                "end\n" +
+                "rule X when\n" +
+                "  accumulate ( Person ( $name, $age; ); \n" +
+                "                $sum : sum($age)  \n" +
+                "              )                          \n" +
+                "then\n" +
+                "  insert(new Result($sum));\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        ksession.fireAllRules();
+
+        Collection<Result> results = getObjectsIntoList(ksession, Result.class);
+        assertEquals(1, results.size());
+        assertEquals(112, results.iterator().next().getValue());
+    }
+
+    @Test
+    public void testAccumulateOnSet() {
+        String str =
+                "import java.util.*;\n" +
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "global " + AtomicReference.class.getCanonicalName() + " holder;\n" +
+                "rule R when\n" +
+                "    Set($size: size) from accumulate( $p: Person(); collectSet($p) )" +
+                "then\n" +
+                "  holder.set($size); \n" +
+                "end";
+
+        KieSession ksession = getKieSession(str);
+        AtomicReference<Integer> holder = new AtomicReference<>(0);
+        ksession.setGlobal("holder", holder);
+
+        ksession.insert(new Person("Mark", 42));
+        ksession.insert(new Person("Edson", 38));
+        FactHandle meFH = ksession.insert(new Person("Mario", 45));
+        FactHandle geoffreyFH = ksession.insert(new Person("Geoffrey", 35));
+        ksession.fireAllRules();
+        assertEquals(4, (int)holder.get());
+
+        ksession.delete( meFH );
+        ksession.fireAllRules();
+        assertEquals(3, (int)holder.get());
+
+        ksession.update(geoffreyFH, new Person("Geoffrey", 40));
+        ksession.insert(new Person("Matteo", 38));
+        ksession.fireAllRules();
+        assertEquals(4, (int)holder.get());
+    }
+
+    @Test
+    public void testNestedAccumulates() {
+        // DROOLS-6202
+        String str =
+                "import java.util.*;\n" +
+                        "import " + Person.class.getCanonicalName() + ";\n" +
+                        "import " + Activation.class.getCanonicalName() + ";\n" +
+                        "global " + AtomicReference.class.getCanonicalName() + " holder;\n" +
+                        "rule R when\n" +
+                        "  accumulate( $set: Set() from accumulate( $p: Person(); collectSet($p) ); $max: max($set.size()) )\n" +
+                        "then\n" +
+                        "  Activation activation = (Activation) drools.getMatch(); \n" +
+                        "  activation.getObjectsDeep(); \n" +
+                        "  holder.set($max); \n" +
+                        "end";
+
+        KieSession ksession = getKieSession(str);
+        AtomicReference<Integer> holder = new AtomicReference<>(0);
+        ksession.setGlobal("holder", holder);
+
+        ksession.insert(new Person("Mark", 42));
+        ksession.insert(new Person("Edson", 38));
+        FactHandle meFH = ksession.insert(new Person("Mario", 45));
+        FactHandle geoffreyFH = ksession.insert(new Person("Geoffrey", 35));
+        ksession.fireAllRules();
+        assertEquals(4, (int)holder.get());
+
+        ksession.delete( meFH );
+        ksession.fireAllRules();
+        assertEquals(3, (int)holder.get());
+
+        ksession.update(geoffreyFH, new Person("Geoffrey", 40));
+        ksession.insert(new Person("Matteo", 38));
+        ksession.fireAllRules();
+        assertEquals(4, (int)holder.get());
+    }
+
+    @Test
+    public void testIfInInlineAccumulate() {
+        // DROOLS-6429
+        String str = "import " + Person.class.getCanonicalName() + ";\n" +
+                "rule R when\n" +
+                "  $avg : Integer() from accumulate (\n" +
+                "            Person( $age : age ), init( int count = 0; int sum = 0; ), " +
+                "                                        action( if ($age > 18) { count++; sum += $age; } ), " +
+                "                                        reverse( if ($age > 18) { count--; sum -= $age; } ), " +
+                "                                        result( sum / count )\n" +
+                "         )" +
+                "then\n" +
+                "  insert($avg);\n" +
+                "end";
+
+        KieSession ksession = getKieSession(str);
+
+        ksession.insert(new Person("Sofia", 10));
+        FactHandle fh_Mark = ksession.insert(new Person("Mark", 37));
+        FactHandle fh_Edson = ksession.insert(new Person("Edson", 35));
+        FactHandle fh_Mario = ksession.insert(new Person("Mario", 42));
+        ksession.fireAllRules();
+
+        List<Integer> results = getObjectsIntoList(ksession, Integer.class);
+        assertEquals(1, results.size());
+        assertThat(results, hasItem(38));
+
+        ksession.delete(fh_Mario);
+        ksession.fireAllRules();
+
+        results = getObjectsIntoList(ksession, Integer.class);
+        assertEquals(2, results.size());
+        assertThat(results, hasItem(36));
+    }
+
+    @Test
+    public void testBindVariableUsedInSubsequentAccumulateString() {
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                     "global java.util.List result;\n" +
+                     "rule X when\n" +
+                     "  accumulate( Person($name : name);\n" +
+                     "    $count : count($name),\n" +
+                     "    $maxName : max($name);\n" +
+                     "    $count > 1\n" +
+                     "  )\n" +
+                     "  accumulate( Person(name == $maxName, $age : age);\n" +
+                     "    $maxAge : max($age)\n" +
+                     "  )\n" +
+                     "then\n" +
+                     "  result.add($maxAge);\n" +
+                     "end";
+
+        KieSession ksession = getKieSession(str);
+        List<Integer> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        ksession.insert(new Person("John", 37));
+        ksession.insert(new Person("John", 60));
+        ksession.insert(new Person("Paul", 35));
+        ksession.insert(new Person("Paul", 50));
+
+        ksession.fireAllRules();
+
+        Assertions.assertThat(result).containsExactly(50);
+    }
+
+    @Test
+    public void testBindVariableUsedInSubsequentAccumulateBigDecimal() {
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                     "global java.util.List result;\n" +
+                     "rule X when\n" +
+                     "  accumulate( Person($money : money);\n" +
+                     "    $count : count($money),\n" +
+                     "    $maxMoney : max($money);\n" +
+                     "    $count > 1\n" +
+                     "  )\n" +
+                     "  accumulate( Person(money == $maxMoney, $age : age);\n" +
+                     "    $maxAge : max($age)\n" +
+                     "  )\n" +
+                     "then\n" +
+                     "  result.add($maxAge);\n" +
+                     "end";
+
+        KieSession ksession = getKieSession(str);
+        List<Integer> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        ksession.insert(new Person("John", 37, new BigDecimal("100.0")));
+        ksession.insert(new Person("John", 60, new BigDecimal("100.0")));
+        ksession.insert(new Person("Paul", 35, new BigDecimal("200.0")));
+        ksession.insert(new Person("Paul", 50, new BigDecimal("200.0")));
+
+        ksession.fireAllRules();
+
+        Assertions.assertThat(result).containsExactly(50);
+    }
+
+    @Test
+    public void testCollectAfterAccumulate() {
+        String str = "import " + Person.class.getCanonicalName() + ";\n" +
+                     "import " + BigDecimal.class.getCanonicalName() + ";\n" +
+                     "import " + ArrayList.class.getCanonicalName() + ";\n" +
+                     "dialect \"mvel\"\n" +
+                     "global java.util.List result;\n" +
+                     "rule R when\n" +
+                     "  accumulate (\n" +
+                     "    Person($age: age),\n" +
+                     "    $maxAge: max($age)\n" +
+                     "  )\n" +
+                     "  $list: ArrayList() from collect (\n" +
+                     "    Person(age < $maxAge)\n" +
+                     "  )\n" +
+                     "then\n" +
+                     "  result.addAll($list)\n" +
+                     "end";
+        try {
+            KieSession ksession = getKieSession(str);
+            List<Person> result = new ArrayList<>();
+            ksession.setGlobal("result", result);
+
+            Person john = new Person("John", 37);
+            Person bob = new Person("Bob", 37);
+            Person paul = new Person("Paul", 35);
+            Person george = new Person("George", 34);
+            ksession.insert(john);
+            ksession.insert(bob);
+            ksession.insert(paul);
+            ksession.insert(george);
+
+            ksession.fireAllRules();
+
+            Assertions.assertThat(result).containsExactlyInAnyOrder(paul, george);
+        } catch (Throwable ex) {
+            Assertions.fail("Should not have thrown.", ex);
+        }
     }
 }

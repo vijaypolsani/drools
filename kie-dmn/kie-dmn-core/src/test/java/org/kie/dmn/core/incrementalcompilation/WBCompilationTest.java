@@ -20,8 +20,11 @@ import org.junit.Test;
 import org.kie.api.KieServices;
 import org.kie.api.builder.KieBuilder;
 import org.kie.api.builder.KieFileSystem;
+import org.kie.api.builder.ReleaseId;
 import org.kie.api.internal.assembler.KieAssemblers;
 import org.kie.api.internal.utils.ServiceRegistry;
+import org.kie.api.runtime.KieContainer;
+import org.kie.dmn.api.core.DMNRuntime;
 import org.kie.dmn.core.assembler.DMNAssemblerService;
 import org.kie.internal.builder.IncrementalResults;
 import org.kie.internal.builder.InternalKieBuilder;
@@ -65,7 +68,7 @@ public class WBCompilationTest {
     static final String DMN_2 = "<?xml version=\"1.0\" ?>\n" +
                                 "<dmn:definitions xmlns:dmn=\"http://www.omg.org/spec/DMN/20180521/MODEL/\" xmlns=\"https://github.com/kiegroup/drools/kie-dmn/_A496D41E-074B-415A-98CB-08833A7A7A7B\" xmlns:di=\"http://www.omg.org/spec/DMN/20180521/DI/\" xmlns:kie=\"http://www.drools.org/kie/dmn/1.2\" xmlns:imported=\"https://github.com/kiegroup/drools/kie-dmn/_E084990F-18BF-4D46-8617-56CF6D8B86B6\" xmlns:feel=\"http://www.omg.org/spec/DMN/20180521/FEEL/\" xmlns:dmndi=\"http://www.omg.org/spec/DMN/20180521/DMNDI/\" xmlns:dc=\"http://www.omg.org/spec/DMN/20180521/DC/\" id=\"_D127BE9B-D616-4850-A67A-F5E4F875ECDA\" name=\"dmn2\" expressionLanguage=\"http://www.omg.org/spec/DMN/20180521/FEEL/\" typeLanguage=\"http://www.omg.org/spec/DMN/20180521/FEEL/\" namespace=\"https://github.com/kiegroup/drools/kie-dmn/_A496D41E-074B-415A-98CB-08833A7A7A7B\">\n" +
                                 "  <dmn:extensionElements></dmn:extensionElements>\n" +
-                                "  <dmn:import id=\"_26A5DCEC-FCC0-4859-8EDB-80F3E4CE6710\" name=\"imported\" namespace=\"https://github.com/kiegroup/drools/kie-dmn/_E084990F-18BF-4D46-8617-56CF6D8B86B6\" locationURI=\"default://master@MySpace/example-Mortgages/src/main/resources/mortgages/mortgages/dmn1.dmn\" importType=\"http://www.omg.org/spec/DMN/20180521/MODEL/\"></dmn:import>\n" +
+                                "  <dmn:import id=\"_26A5DCEC-FCC0-4859-8EDB-80F3E4CE6710\" name=\"imported\" namespace=\"https://github.com/kiegroup/drools/kie-dmn/_E084990F-18BF-4D46-8617-56CF6D8B86B6\" locationURI=\"default://DEFAULT_BRANCH@MySpace/example-Mortgages/src/main/resources/mortgages/mortgages/dmn1.dmn\" importType=\"http://www.omg.org/spec/DMN/20180521/MODEL/\"></dmn:import>\n" +
                                 "  <dmndi:DMNDI>\n" +
                                 "    <dmndi:DMNDiagram>\n" +
                                 "      <di:extension>\n" +
@@ -77,12 +80,14 @@ public class WBCompilationTest {
 
     @Test
     public void testSteppedCompilation() {
-        final KieAssemblersImpl assemblers = (KieAssemblersImpl) ServiceRegistry.getInstance().get(KieAssemblers.class);
+        final KieAssemblersImpl assemblers = (KieAssemblersImpl) ServiceRegistry.getService(KieAssemblers.class);
         assemblers.accept(new DMNAssemblerService());
 
         KieServices ks = KieServices.Factory.get();
 
+        ReleaseId id = ks.newReleaseId("org.test", "foo", "1.0-SNAPSHOT");
         KieFileSystem kfs = ks.newKieFileSystem();
+        kfs.generateAndWritePomXML(id);
 
         kfs.write("src/main/resources/org/kie/scanner/dmn1.dmn", DMN_1);
         KieBuilder kieBuilder = ks.newKieBuilder(kfs).buildAll(DrlProject.class);
@@ -92,5 +97,39 @@ public class WBCompilationTest {
         IncrementalResults addResults = ((InternalKieBuilder) kieBuilder).createFileSet("src/main/resources/org/kie/scanner/dmn2.dmn").build();
         assertEquals(0, addResults.getAddedMessages().size());
         assertEquals(0, addResults.getRemovedMessages().size());
+
+        KieContainer kieContainer = ks.newKieContainer(id);
+        DMNRuntime runtime = kieContainer.newKieSession().getKieRuntime(DMNRuntime.class);
+        assertEquals(2, runtime.getModels().size());
+    }
+
+    @Test
+    public void testSteppedCompilationFromEmptyKbuilder() {
+        // DROOLS-5584
+        final KieAssemblersImpl assemblers = (KieAssemblersImpl) ServiceRegistry.getService(KieAssemblers.class);
+        assemblers.accept(new DMNAssemblerService());
+
+        KieServices ks = KieServices.Factory.get();
+
+        ReleaseId id = ks.newReleaseId("org.test", "foo", "1.0-SNAPSHOT");
+        KieFileSystem kfs = ks.newKieFileSystem();
+        kfs.generateAndWritePomXML(id);
+
+        KieBuilder kieBuilder = ks.newKieBuilder(kfs).buildAll(DrlProject.class);
+        assertEquals(0, kieBuilder.getResults().getMessages(org.kie.api.builder.Message.Level.ERROR).size());
+
+        kfs.write("src/main/resources/org/kie/scanner/dmn1.dmn", DMN_1);
+        IncrementalResults addResults = ((InternalKieBuilder) kieBuilder).createFileSet("src/main/resources/org/kie/scanner/dmn1.dmn").build();
+        assertEquals(0, addResults.getAddedMessages().size());
+        assertEquals(0, addResults.getRemovedMessages().size());
+
+        kfs.write("src/main/resources/org/kie/scanner/dmn2.dmn", DMN_2);
+        addResults = ((InternalKieBuilder) kieBuilder).createFileSet("src/main/resources/org/kie/scanner/dmn2.dmn").build();
+        assertEquals(0, addResults.getAddedMessages().size());
+        assertEquals(0, addResults.getRemovedMessages().size());
+
+        KieContainer kieContainer = ks.newKieContainer(id);
+        DMNRuntime runtime = kieContainer.newKieSession().getKieRuntime(DMNRuntime.class);
+        assertEquals(2, runtime.getModels().size());
     }
 }

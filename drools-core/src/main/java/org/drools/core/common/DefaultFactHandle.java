@@ -66,7 +66,7 @@ public class DefaultFactHandle extends AbstractBaseLinkedListNode<DefaultFactHan
 
     private boolean                   disconnected;
 
-    protected TraitTypeEnum           traitType;
+    protected TraitTypeEnum           traitType = TraitTypeEnum.NON_TRAIT;
 
     private boolean                   valid = true;
 
@@ -85,6 +85,10 @@ public class DefaultFactHandle extends AbstractBaseLinkedListNode<DefaultFactHan
     // ----------------------------------------------------------------------
 
     public DefaultFactHandle() {
+    }
+
+    public DefaultFactHandle(final Object object) {
+        this.object = object;
     }
 
     public DefaultFactHandle(final long id, final Object object) {
@@ -219,10 +223,16 @@ public class DefaultFactHandle extends AbstractBaseLinkedListNode<DefaultFactHan
     }
 
     public int getObjectHashCode() {
-        return this.objectHashCode;
+        if (this.objectHashCode == 0 && this.object != null) {
+            this.objectHashCode = object.hashCode();
+        }
+        return objectHashCode;
     }
 
     public int getIdentityHashCode() {
+        if (this.identityHashCode == 0 && this.object != null) {
+            this.identityHashCode = determineIdentityHashCode( object );
+        }
         return this.identityHashCode;
     }
 
@@ -263,7 +273,7 @@ public class DefaultFactHandle extends AbstractBaseLinkedListNode<DefaultFactHan
                ":" +
                this.traitType.name() +
                ":" +
-               this.objectClassName;
+                getObjectClassName();
     }
 
     protected String getFormatVersion() {
@@ -311,17 +321,16 @@ public class DefaultFactHandle extends AbstractBaseLinkedListNode<DefaultFactHan
     }
 
     public String getObjectClassName() {
+        if (object != null) {
+            this.objectClassName = object.getClass().getName();
+        }
         return this.objectClassName;
     }
 
     public void setObject( final Object object ) {
         this.object = object;
-        if (object != null) {
-            this.objectClassName = object.getClass().getName();
-            this.objectHashCode = object.hashCode();
-        } else {
-            this.objectHashCode = 0;
-        }
+        this.objectClassName = null;
+        this.objectHashCode = 0;
 
         if ( isTraitOrTraitable() ) {
             TraitTypeEnum newType = determineTraitType(object, isTraitOrTraitable());
@@ -332,7 +341,7 @@ public class DefaultFactHandle extends AbstractBaseLinkedListNode<DefaultFactHan
             }
             this.traitType = newType;
         } else {
-            this.identityHashCode = determineIdentityHashCode( object );
+            this.identityHashCode = 0;
         }
     }
 

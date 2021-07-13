@@ -16,27 +16,23 @@
 
 package org.drools.core.reteoo;
 
-import java.io.Externalizable;
 import java.io.IOException;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.drools.core.RuleBaseConfiguration;
+import org.drools.core.WorkingMemory;
 import org.drools.core.base.ClassObjectType;
 import org.drools.core.common.BetaConstraints;
 import org.drools.core.common.InternalFactHandle;
 import org.drools.core.common.InternalWorkingMemory;
 import org.drools.core.common.Memory;
-import org.drools.core.common.WorkingMemoryAction;
 import org.drools.core.impl.InternalKnowledgeBase;
-import org.drools.core.marshalling.impl.PersisterHelper;
-import org.drools.core.marshalling.impl.ProtobufInputMarshaller;
-import org.drools.core.marshalling.impl.ProtobufInputMarshaller.TupleKey;
-import org.drools.core.marshalling.impl.ProtobufMessages;
-import org.drools.core.marshalling.impl.ProtobufMessages.FactHandle;
+import org.drools.core.phreak.PhreakAccumulateNode;
 import org.drools.core.reteoo.builder.BuildContext;
 import org.drools.core.rule.Accumulate;
 import org.drools.core.rule.ContextEntry;
@@ -47,8 +43,11 @@ import org.drools.core.spi.Accumulator;
 import org.drools.core.spi.AlphaNodeFieldConstraint;
 import org.drools.core.spi.ObjectType;
 import org.drools.core.spi.PropagationContext;
+import org.drools.core.spi.Tuple;
 import org.drools.core.util.AbstractBaseLinkedListNode;
+import org.drools.core.util.FastIterator;
 import org.drools.core.util.bitmask.BitMask;
+import org.drools.core.util.index.TupleList;
 
 /**
  * AccumulateNode
@@ -62,7 +61,6 @@ public class AccumulateNode extends BetaNode {
 
     private static final long          serialVersionUID = 510l;
 
-    protected boolean                    unwrapRightObject;
     protected Accumulate                 accumulate;
     protected AlphaNodeFieldConstraint[] resultConstraints;
     protected BetaConstraints            resultBinder;
@@ -77,18 +75,17 @@ public class AccumulateNode extends BetaNode {
                           final BetaConstraints sourceBinder,
                           final BetaConstraints resultBinder,
                           final Accumulate accumulate,
-                          final boolean unwrapRightObject,
                           final BuildContext context) {
         super( id,
                leftInput,
                rightInput,
                sourceBinder,
                context );
+        this.setObjectCount(leftInput.getObjectCount() + 1); // 'accumulate' node increases the object count
         this.resultBinder = resultBinder;
         this.resultBinder.init( context, getType() );
         this.resultConstraints = resultConstraints;
         this.accumulate = accumulate;
-        this.unwrapRightObject = unwrapRightObject;
         this.tupleMemoryEnabled = context.isTupleMemoryEnabled();
 
         addAccFunctionDeclarationsToLeftMask( context.getKnowledgeBase(), leftInput, accumulate );
@@ -105,7 +102,7 @@ public class AccumulateNode extends BetaNode {
         BitMask leftMask = getLeftInferredMask();
         ObjectType leftObjectType = leftInput.getObjectType();
         if (leftObjectType instanceof ClassObjectType ) {
-            TypeDeclaration typeDeclaration = kbase.getExactTypeDeclaration( ((ClassObjectType) leftObjectType).getClassType() );
+            TypeDeclaration typeDeclaration = kbase.getExactTypeDeclaration( leftObjectType.getClassType() );
             if (typeDeclaration != null && typeDeclaration.isPropertyReactive()) {
                 List<String> accessibleProperties = typeDeclaration.getAccessibleProperties();
                 for ( Declaration decl : accumulate.getRequiredDeclarations() ) {
@@ -128,7 +125,6 @@ public class AccumulateNode extends BetaNode {
     public void readExternal( ObjectInput in ) throws IOException,
                                               ClassNotFoundException {
         super.readExternal( in );
-        unwrapRightObject = in.readBoolean();
         accumulate = (Accumulate) in.readObject();
         resultConstraints = (AlphaNodeFieldConstraint[]) in.readObject();
         resultBinder = (BetaConstraints) in.readObject();
@@ -136,7 +132,6 @@ public class AccumulateNode extends BetaNode {
 
     public void writeExternal( ObjectOutput out ) throws IOException {
         super.writeExternal( out );
-        out.writeBoolean( unwrapRightObject );
         out.writeObject( accumulate );
         out.writeObject( resultConstraints );
         out.writeObject( resultBinder );
@@ -145,7 +140,6 @@ public class AccumulateNode extends BetaNode {
     public short getType() {
         return NodeTypeEnums.AccumulateNode;
     }
-
 
     public Accumulate getAccumulate() {
         return this.accumulate;
@@ -159,44 +153,26 @@ public class AccumulateNode extends BetaNode {
         return resultBinder;
     }
 
-    public boolean isUnwrapRightObject() {
-        return unwrapRightObject;
-    }
-
     public InternalFactHandle createResultFactHandle(final PropagationContext context,
                                                      final InternalWorkingMemory workingMemory,
                                                      final LeftTuple leftTuple,
                                                      final Object result) {
-        InternalFactHandle handle;
-        ProtobufMessages.FactHandle _handle = null;
-        if( context.getReaderContext() != null ) {
-            Map<TupleKey, FactHandle> map = (Map<ProtobufInputMarshaller.TupleKey, ProtobufMessages.FactHandle>) context.getReaderContext().getNodeMemories().get( getId() );
-            if( map != null ) {
-                _handle = map.get( PersisterHelper.createTupleKey(leftTuple) );
-            }
+        InternalFactHandle handle = null;
+        if ( context.getReaderContext() != null ) {
+            handle = context.getReaderContext().createAccumulateHandle( context.getEntryPoint(), workingMemory, leftTuple, result, getId() );
         }
-        if( _handle != null ) {
-            // create a handle with the given id
-            handle = workingMemory.getFactHandleFactory().newFactHandle( _handle.getId(),
-                                                                         result,
-                                                                         _handle.getRecency(),
-                                                                         workingMemory.getObjectTypeConfigurationRegistry().getObjectTypeConf( context.getEntryPoint(),
-                                                                                                                                               result ),
-                                                                         workingMemory,
-                                                                         null ); // so far, result is not an event
-        } else {
+        if (handle == null) {
             handle = workingMemory.getFactHandleFactory().newFactHandle( result,
-                                                                         workingMemory.getObjectTypeConfigurationRegistry().getObjectTypeConf( context.getEntryPoint(),
-                                                                                                                                               result ),
+                                                                         null, // no need to retrieve the ObjectTypeConf, acc result is never an event or a trait
                                                                          workingMemory,
-                                                                         null ); // so far, result is not an event
+                                                                         null );
         }
         return handle;
     }
 
     @Override
-    public void attach( BuildContext context ) {
-        super.attach( context );
+    public void doAttach( BuildContext context ) {
+        super.doAttach( context );
     }
 
     protected int calculateHashCode() {
@@ -320,38 +296,24 @@ public class AccumulateNode extends BetaNode {
         }
     }
 
-    public static class AccumulateContext
-        implements
-        ContextOwner, Externalizable {
-        public  Object              context;
-        public  RightTuple          result;
-        public  InternalFactHandle  resultFactHandle;
-        public  LeftTuple           resultLeftTuple;
-        public  boolean             propagated;
-        private WorkingMemoryAction action; // is transiant
-        private PropagationContext  propagationContext;
+    public interface BaseAccumulation {
+        PropagationContext getPropagationContext();
 
-        public void readExternal(ObjectInput in) throws IOException,
-                ClassNotFoundException {
-            context = in.readObject();
-            result = (RightTuple) in.readObject();
-            propagated = in.readBoolean();
-            propagationContext = (PropagationContext) in.readObject();
-        }
+        void setPropagationContext(PropagationContext propagationContext);
+    }
 
-        public void writeExternal(ObjectOutput out) throws IOException {
-            out.writeObject(context);
-            out.writeObject(result);
-            out.writeBoolean(propagated);
-            out.writeObject(propagationContext);
-        }
 
-        public WorkingMemoryAction getAction() {
-            return action;
-        }
+    public static class AccumulateContextEntry {
+        private Object             key;
+        private InternalFactHandle resultFactHandle;
+        private LeftTuple          resultLeftTuple;
+        private boolean            propagated;
+        private Object             functionContext;
+        private boolean            toPropagate;
+        private boolean            empty = true;
 
-        public void setAction(WorkingMemoryAction action) {
-            this.action = action;
+        public AccumulateContextEntry(Object key) {
+            this.key = key;
         }
 
         public InternalFactHandle getResultFactHandle() {
@@ -370,6 +332,65 @@ public class AccumulateNode extends BetaNode {
             this.resultLeftTuple = resultLeftTuple;
         }
 
+        public boolean isPropagated() {
+            return propagated;
+        }
+
+        public void setPropagated( boolean propagated ) {
+            this.propagated = propagated;
+        }
+
+        public boolean isToPropagate() {
+            return toPropagate;
+        }
+
+        public void setToPropagate(boolean toPropagate) {
+            this.toPropagate = toPropagate;
+        }
+
+        public Object getFunctionContext() {
+            return functionContext;
+        }
+
+        public void setFunctionContext(Object context) {
+            this.functionContext = context;
+        }
+
+        public Object getKey() {
+            return this.key;
+        }
+
+        public boolean isEmpty() {
+            return empty;
+        }
+
+        public void setEmpty( boolean empty ) {
+            this.empty = empty;
+        }
+    }
+
+    public static class AccumulateContext extends AccumulateContextEntry implements BaseAccumulation {
+        private PropagationContext  propagationContext;
+
+        public AccumulateContext() {
+            super(null);
+        }
+
+        public PropagationContext getPropagationContext() {
+            return propagationContext;
+        }
+
+        public void setPropagationContext(PropagationContext propagationContext) {
+            this.propagationContext = propagationContext;
+        }
+    }
+
+    public static class GroupByContext implements BaseAccumulation {
+        private PropagationContext                              propagationContext;
+        private Map<Object, TupleList<AccumulateContextEntry> > groupsMap = new HashMap<>();
+        private TupleList<AccumulateContextEntry>               lastTupleList;
+        private TupleList<AccumulateContextEntry>               toPropagateList;
+
         public PropagationContext getPropagationContext() {
             return propagationContext;
         }
@@ -378,11 +399,66 @@ public class AccumulateNode extends BetaNode {
             this.propagationContext = propagationContext;
         }
 
-        public <T> T getContext(Class<T> contextClass) {
-            if (contextClass.isInstance( context )) {
-                return (T) context;
+        public Map<Object, TupleList<AccumulateContextEntry>> getGroups() {
+            return groupsMap;
+        }
+
+        public TupleList<AccumulateContextEntry> getGroup(Object workingMemoryContext, Accumulate accumulate, Tuple leftTuple,
+                                                          Object key, WorkingMemory wm) {
+            return groupsMap.computeIfAbsent(key, k -> {
+                AccumulateContextEntry entry = new AccumulateContextEntry(key);
+                entry.setFunctionContext( accumulate.init(workingMemoryContext, entry, accumulate.createFunctionContext(), leftTuple, wm) );
+                PhreakAccumulateNode.initContext(workingMemoryContext, (InternalWorkingMemory) wm, accumulate, leftTuple, entry);
+                return new TupleList<>(entry);
+            });
+        }
+
+        public void removeGroup(Object key) {
+            groupsMap.remove(key);
+        }
+
+        public void moveToPropagateTupleList(TupleList<AccumulateContextEntry> list) {
+            this.lastTupleList = list;
+            if ( list.getContext().isToPropagate()) {
+                return;
             }
-            return null;
+
+            // add list to head
+            if (toPropagateList != null) {
+                toPropagateList.setPrevious(list);
+            }
+            list.setNext(toPropagateList);
+            list.setPrevious(null);
+            toPropagateList = list;
+
+            list.getContext().setToPropagate(true);
+        }
+
+        public TupleList<AccumulateContextEntry> takeToPropagateList() {
+            TupleList<AccumulateContextEntry> list = toPropagateList;
+            toPropagateList = null;
+            return list;
+        }
+
+        public TupleList<AccumulateContextEntry> getLastTupleList() {
+            return lastTupleList;
+        }
+
+        public void addMatchOnLastTupleList(LeftTuple match) {
+            lastTupleList.add(match);
+            lastTupleList.getContext().setEmpty( false );
+        }
+
+        public void clear() {
+            for (TupleList<AccumulateContextEntry> list : groupsMap.values()) {
+                for ( Tuple tuple = list.getFirst(); list.getFirst() != null; tuple = list.getFirst()) {
+                    list.remove(tuple);
+                    tuple.setContextObject(null);
+                }
+            }
+            groupsMap.clear();
+            toPropagateList = null;
+            lastTupleList = null;
         }
     }
 
@@ -425,10 +501,6 @@ public class AccumulateNode extends BetaNode {
         peer.initPeer((BaseLeftTuple) original, this);
         original.setPeer(peer);
         return peer;
-    }
-
-    public enum ActivitySource {
-        LEFT, RIGHT
     }
 
     /**

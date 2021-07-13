@@ -1,11 +1,14 @@
 package org.kie.dmn.feel.runtime.functions;
 
-import org.kie.dmn.api.feel.runtime.events.FEELEvent;
-import org.kie.dmn.feel.runtime.events.InvalidParametersEvent;
-
 import java.math.BigDecimal;
 import java.math.MathContext;
 
+import ch.obermuhlner.math.big.BigDecimalMath;
+import org.kie.dmn.api.feel.runtime.events.FEELEvent;
+import org.kie.dmn.feel.runtime.events.InvalidParametersEvent;
+import org.kie.dmn.model.api.GwtIncompatible;
+
+@GwtIncompatible
 public class ExpFunction
         extends BaseFEELFunction {
     public static final ExpFunction INSTANCE = new ExpFunction();
@@ -18,6 +21,6 @@ public class ExpFunction
         if ( number == null ) {
             return FEELFnResult.ofError( new InvalidParametersEvent( FEELEvent.Severity.ERROR, "number", "cannot be null" ) );
         }
-        return FEELFnResult.ofResult( new BigDecimal( Math.exp( number.doubleValue() ), MathContext.DECIMAL128 ) );
+        return FEELFnResult.ofResult(BigDecimalMath.exp(number, MathContext.DECIMAL128));
     }
 }

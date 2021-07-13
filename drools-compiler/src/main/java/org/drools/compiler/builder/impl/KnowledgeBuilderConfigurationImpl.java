@@ -32,9 +32,8 @@ import org.drools.compiler.compiler.DrlParser;
 import org.drools.compiler.compiler.PackageRegistry;
 import org.drools.compiler.compiler.xml.RulesSemanticModule;
 import org.drools.compiler.kie.builder.impl.InternalKieModule.CompilationCache;
+import org.drools.compiler.rule.builder.ConstraintBuilder;
 import org.drools.compiler.rule.builder.DroolsCompilerComponentFactory;
-import org.drools.compiler.rule.builder.dialect.java.JavaDialectConfiguration;
-import org.drools.compiler.rule.builder.dialect.mvel.MVELDialectConfiguration;
 import org.drools.compiler.rule.builder.util.AccumulateUtil;
 import org.drools.core.base.evaluators.EvaluatorDefinition;
 import org.drools.core.base.evaluators.EvaluatorRegistry;
@@ -55,6 +54,7 @@ import org.kie.api.runtime.rule.AccumulateFunction;
 import org.kie.internal.builder.KnowledgeBuilderConfiguration;
 import org.kie.internal.builder.ResultSeverity;
 import org.kie.internal.builder.conf.AccumulateFunctionOption;
+import org.kie.internal.builder.conf.AlphaNetworkCompilerOption;
 import org.kie.internal.builder.conf.ClassLoaderCacheOption;
 import org.kie.internal.builder.conf.DefaultDialectOption;
 import org.kie.internal.builder.conf.DefaultPackageNameOption;
@@ -66,6 +66,7 @@ import org.kie.internal.builder.conf.KBuilderSeverityOption;
 import org.kie.internal.builder.conf.KnowledgeBuilderOption;
 import org.kie.internal.builder.conf.LanguageLevelOption;
 import org.kie.internal.builder.conf.MultiValueKnowledgeBuilderOption;
+import org.kie.internal.builder.conf.ParallelLambdaExternalizationOption;
 import org.kie.internal.builder.conf.ParallelRulesBuildThresholdOption;
 import org.kie.internal.builder.conf.ProcessStringEscapesOption;
 import org.kie.internal.builder.conf.PropertySpecificOption;
@@ -118,7 +119,7 @@ public class KnowledgeBuilderConfigurationImpl
     private final Map<String, DialectConfiguration> dialectConfigurations = new HashMap<>();
 
     private DefaultDialectOption              defaultDialect = DefaultDialectOption.get("java");
-    
+
     private ParallelRulesBuildThresholdOption parallelRulesBuildThreshold = ParallelRulesBuildThresholdOption.get(DEFAULT_PARALLEL_RULES_BUILD_THRESHOLD);
 
     private ClassLoader                       classLoader;
@@ -137,7 +138,11 @@ public class KnowledgeBuilderConfigurationImpl
     private boolean                           classLoaderCache                      = true;
     private boolean                           trimCellsInDTable                     = true;
     private boolean                           groupDRLsInKieBasesByFolder           = false;
+
     private boolean                           externaliseCanonicalModelLambda       = true;
+    private boolean                           parallelLambdaExternalization         = true;
+
+    private AlphaNetworkCompilerOption        alphaNetworkCompilerOption            = AlphaNetworkCompilerOption.DISABLED;
 
     private static final PropertySpecificOption DEFAULT_PROP_SPEC_OPT = PropertySpecificOption.ALWAYS;
     private PropertySpecificOption            propertySpecificOption  = DEFAULT_PROP_SPEC_OPT;
@@ -147,8 +152,6 @@ public class KnowledgeBuilderConfigurationImpl
     private Map<String, ResultSeverity>       severityMap;
 
     private DroolsCompilerComponentFactory    componentFactory;
-
-    private ClassBuilderFactory               classBuilderFactory;
 
     private KieComponentFactory               kieComponentFactory;
 
@@ -262,10 +265,12 @@ public class KnowledgeBuilderConfigurationImpl
         setProperty(ExternaliseCanonicalModelLambdaOption.PROPERTY_NAME,
                     this.chainedProperties.getProperty(ExternaliseCanonicalModelLambdaOption.PROPERTY_NAME,"true"));
 
+        setProperty(ParallelLambdaExternalizationOption.PROPERTY_NAME,
+                    this.chainedProperties.getProperty(ParallelLambdaExternalizationOption.PROPERTY_NAME,"true"));
+
         this.componentFactory = new DroolsCompilerComponentFactory();
 
         this.kieComponentFactory = createKieComponentFactory();
-        this.classBuilderFactory = kieComponentFactory.getClassBuilderFactory();
     }
 
     protected ClassLoader getFunctionFactoryClassLoader() {
@@ -332,6 +337,14 @@ public class KnowledgeBuilderConfigurationImpl
         	setParallelRulesBuildThreshold(Integer.valueOf(value));
         }  else if (name.equals(ExternaliseCanonicalModelLambdaOption.PROPERTY_NAME)) {
             setExternaliseCanonicalModelLambda(Boolean.valueOf(value));
+        } else if (name.equals(ParallelLambdaExternalizationOption.PROPERTY_NAME)) {
+            setParallelLambdaExternalization(Boolean.valueOf(value));
+        } else if (name.equals(AlphaNetworkCompilerOption.PROPERTY_NAME)) {
+            try {
+                setAlphaNetworkCompilerOption(AlphaNetworkCompilerOption.determineAlphaNetworkCompilerMode(value.toUpperCase()));
+            } catch (IllegalArgumentException e) {
+                log.warn("Invalid value " + value + " for option " + AlphaNetworkCompilerOption.PROPERTY_NAME);
+            }
         } else {
             // if the property from the kmodule was not intercepted above, just add it to the chained properties.
             Properties additionalProperty = new Properties();
@@ -378,6 +391,8 @@ public class KnowledgeBuilderConfigurationImpl
         	return String.valueOf(getParallelRulesBuildThreshold());
         } else if (name.equals(ExternaliseCanonicalModelLambdaOption.PROPERTY_NAME)) {
         	return String.valueOf(isExternaliseCanonicalModelLambda());
+        } else if (name.equals(ParallelLambdaExternalizationOption.PROPERTY_NAME)) {
+        	return String.valueOf(isParallelLambdaExternalization());
         }
         return null;
     }
@@ -387,11 +402,13 @@ public class KnowledgeBuilderConfigurationImpl
     }
 
     private void buildDialectConfigurationMap() {
-        DialectConfiguration mvel = new MVELDialectConfiguration();
-        mvel.init(this);
-        dialectConfigurations.put("mvel", mvel);
+        DialectConfiguration mvel = ConstraintBuilder.get().createMVELDialectConfiguration();
+        if (mvel != null) {
+            mvel.init( this );
+            dialectConfigurations.put( "mvel", mvel );
+        }
 
-        DialectConfiguration java = new JavaDialectConfiguration();
+        DialectConfiguration java = ConstraintBuilder.get().createJavaDialectConfiguration();
         java.init(this);
         dialectConfigurations.put("java", java);
 
@@ -400,10 +417,8 @@ public class KnowledgeBuilderConfigurationImpl
         setDefaultDialect(dialectProperties.get(DefaultDialectOption.PROPERTY_NAME));
     }
 
-    public void addDialect(String dialectName,
-            DialectConfiguration dialectConf) {
-        dialectConfigurations.put(dialectName,
-                dialectConf);
+    public void addDialect(String dialectName, DialectConfiguration dialectConf) {
+        dialectConfigurations.put(dialectName, dialectConf);
     }
 
     public DialectCompiletimeRegistry buildDialectRegistry(ClassLoader rootClassLoader,
@@ -430,10 +445,8 @@ public class KnowledgeBuilderConfigurationImpl
         return this.dialectConfigurations.get(name);
     }
 
-    public void setDialectConfiguration(String name,
-            DialectConfiguration configuration) {
-        this.dialectConfigurations.put(name,
-                configuration);
+    public void setDialectConfiguration(String name, DialectConfiguration configuration) {
+        this.dialectConfigurations.put(name, configuration);
     }
 
     public ClassLoader getClassLoader() {
@@ -471,8 +484,7 @@ public class KnowledgeBuilderConfigurationImpl
         this.semanticModules.addSemanticModule(new ChangeSetSemanticModule());
 
         // split on each space
-        String locations[] = this.chainedProperties.getProperty("semanticModules",
-                "").split("\\s");
+        String locations[] = this.chainedProperties.getProperty("semanticModules", "").split("\\s");
 
         // load each SemanticModule
         for (String moduleLocation : locations) {
@@ -482,8 +494,7 @@ public class KnowledgeBuilderConfigurationImpl
                 moduleLocation = moduleLocation.substring(1);
             }
             if (moduleLocation.endsWith("\"")) {
-                moduleLocation = moduleLocation.substring(0,
-                        moduleLocation.length() - 1);
+                moduleLocation = moduleLocation.substring(0, moduleLocation.length() - 1);
             }
             if (!moduleLocation.equals("")) {
                 loadSemanticModule(moduleLocation);
@@ -492,9 +503,7 @@ public class KnowledgeBuilderConfigurationImpl
     }
 
     public void loadSemanticModule(String moduleLocation) {
-        URL url = ConfFileUtils.getURL(moduleLocation,
-                getClassLoader(),
-                getClass());
+        URL url = ConfFileUtils.getURL(moduleLocation, getClassLoader(), getClass());
         if (url == null) {
             throw new IllegalArgumentException(moduleLocation + " is specified but cannot be found.'");
         }
@@ -508,8 +517,7 @@ public class KnowledgeBuilderConfigurationImpl
     }
 
     public void loadSemanticModule(Properties properties) {
-        String uri = properties.getProperty("uri",
-                null);
+        String uri = properties.getProperty("uri", null);
         if (uri == null || uri.trim().equals("")) {
             throw new RuntimeException("Semantic Module URI property must not be empty");
         }
@@ -545,8 +553,7 @@ public class KnowledgeBuilderConfigurationImpl
         this.semanticModules.addSemanticModule(module);
     }
 
-    public void addAccumulateFunction(String identifier,
-            String className) {
+    public void addAccumulateFunction(String identifier, String className) {
         this.accumulateFunctions.put(identifier,
                                      AccumulateUtil.loadAccumulateFunction(getClassLoader(), identifier,
                         className));
@@ -709,11 +716,7 @@ public class KnowledgeBuilderConfigurationImpl
     }
 
     public ClassBuilderFactory getClassBuilderFactory() {
-        return classBuilderFactory;
-    }
-
-    public void setClassBuilderFactory(ClassBuilderFactory classBuilderFactory) {
-        this.classBuilderFactory = classBuilderFactory;
+        return kieComponentFactory.getClassBuilderFactory();
     }
 
     public KieComponentFactory getKieComponentFactory() {
@@ -744,6 +747,22 @@ public class KnowledgeBuilderConfigurationImpl
         this.externaliseCanonicalModelLambda = externaliseCanonicalModelLambda;
     }
 
+    public boolean isParallelLambdaExternalization() {
+        return parallelLambdaExternalization;
+    }
+
+    public void setParallelLambdaExternalization(boolean parallelLambdaExternalization) {
+        this.parallelLambdaExternalization = parallelLambdaExternalization;
+    }
+
+    public AlphaNetworkCompilerOption getAlphaNetworkCompilerOption() {
+        return alphaNetworkCompilerOption;
+    }
+
+    public void setAlphaNetworkCompilerOption(AlphaNetworkCompilerOption alphaNetworkCompilerOption) {
+        this.alphaNetworkCompilerOption = alphaNetworkCompilerOption;
+    }
+
     @SuppressWarnings("unchecked")
     public <T extends SingleValueKnowledgeBuilderOption> T getOption(Class<T> option) {
         if (DefaultDialectOption.class.equals(option)) {
@@ -766,6 +785,10 @@ public class KnowledgeBuilderConfigurationImpl
             return (T) languageLevel;
         } else if (ExternaliseCanonicalModelLambdaOption.class.equals(option)) {
             return (T) (externaliseCanonicalModelLambda ? ExternaliseCanonicalModelLambdaOption.ENABLED : ExternaliseCanonicalModelLambdaOption.DISABLED);
+        } else if (ParallelLambdaExternalizationOption.class.equals(option)) {
+            return (T) (parallelLambdaExternalization ? ParallelLambdaExternalizationOption.ENABLED : ParallelLambdaExternalizationOption.DISABLED);
+        } else if (AlphaNetworkCompilerOption.class.equals(option)) {
+            return (T) alphaNetworkCompilerOption;
         }
         return null;
     }
@@ -827,6 +850,10 @@ public class KnowledgeBuilderConfigurationImpl
             this.languageLevel = ((LanguageLevelOption) option);
         } else if (option instanceof ExternaliseCanonicalModelLambdaOption) {
             this.externaliseCanonicalModelLambda = ((ExternaliseCanonicalModelLambdaOption) option).isCanonicalModelLambdaExternalized();
+        } else if (option instanceof ParallelLambdaExternalizationOption) {
+            this.parallelLambdaExternalization = ((ParallelLambdaExternalizationOption) option).isLambdaExternalizationParallel();
+        } else if (option instanceof AlphaNetworkCompilerOption) {
+            this.alphaNetworkCompilerOption = ((AlphaNetworkCompilerOption) option);
         }
     }
 

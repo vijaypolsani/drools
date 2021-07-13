@@ -36,6 +36,16 @@ public class DynamicProjectClassLoader extends ProjectClassLoader {
         super(parent, resourceProvider);
     }
 
+    @Override
+    public boolean isDynamic() {
+        return true;
+    }
+
+    @Override
+    protected boolean isStoreFirst(String name) {
+        return isEnableStoreFirst() && generatedClassNames.contains(name);
+    }
+
     public static class IBMDynamicClassLoader extends DynamicProjectClassLoader {
 
         private final boolean parentImplementsFindResources;
@@ -98,6 +108,14 @@ public class DynamicProjectClassLoader extends ProjectClassLoader {
         }
 
         protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (isStoreFirst(name)) {
+                Class<?> clazz = findLoadedClass(name); // skip parent classloader
+                if (clazz != null) {
+                    return clazz;
+                }
+                // if generated class, go straight to defineType
+                return projectClassLoader.tryDefineType(name, null);
+            }
             try {
                 return loadType(name, resolve);
             } catch (ClassNotFoundException cnfe) {
@@ -109,8 +127,17 @@ public class DynamicProjectClassLoader extends ProjectClassLoader {
             }
         }
 
+        private boolean isStoreFirst(String name) {
+            return ProjectClassLoader.isEnableStoreFirst() && projectClassLoader.getGeneratedClassNames().contains(name);
+        }
+
         public Class<?> loadType(String name, boolean resolve) throws ClassNotFoundException {
             return super.loadClass(name, resolve);
+        }
+
+        @Override
+        public Class<?> findLoadedClassWithoutParent( String name ) {
+            return findLoadedClass(name);
         }
 
         @Override

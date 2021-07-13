@@ -18,17 +18,18 @@ package org.drools.core.definitions.rule.impl;
 
 import java.io.Externalizable;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.ObjectInput;
 import java.io.ObjectOutput;
 import java.io.Serializable;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
@@ -59,7 +60,6 @@ import org.kie.api.io.Resource;
 import org.kie.internal.definition.rule.InternalRule;
 import org.kie.internal.security.KiePolicyHelper;
 
-import static org.drools.core.util.IoUtils.readBytesFromInputStream;
 import static org.kie.internal.ruleunit.RuleUnitUtil.isLegacyRuleUnit;
 
 public class RuleImpl implements Externalizable,
@@ -137,7 +137,7 @@ public class RuleImpl implements Externalizable,
 
     private List<QueryImpl>          usedQueries;
 
-    private List<QueryImpl>          dependingQueries;
+    private Collection<QueryImpl>    dependingQueries;
 
     private int                      ruleFlags;
 
@@ -243,14 +243,14 @@ public class RuleImpl implements Externalizable,
      * by their relative dependencies, e.g. if R1 -> A -> B -> C (where the letter are queries)
      * it will return [C, B, A]
      */
-    public List<QueryImpl> getDependingQueries() {
+    public Collection<QueryImpl> getDependingQueries() {
         if (dependingQueries == null) {
-            dependingQueries = usedQueries == null ? Collections.emptyList() : collectDependingQueries(new LinkedList<>());
+            dependingQueries = usedQueries == null ? Collections.emptyList() : collectDependingQueries(new ArrayDeque<>());
         }
         return dependingQueries;
     }
 
-    protected List<QueryImpl> collectDependingQueries(LinkedList<QueryImpl> accumulator) {
+    protected Collection<QueryImpl> collectDependingQueries(Deque<QueryImpl> accumulator) {
         if (usedQueries == null) {
             return accumulator;
         }
@@ -644,10 +644,6 @@ public class RuleImpl implements Externalizable,
         return namedConsequences != null && !namedConsequences.isEmpty();
     }
 
-    public Map<String, Consequence> getNamedConsequences() {
-        return this.namedConsequences;
-    }
-
     public Consequence getNamedConsequence(String consequenceName)  {
         Consequence consequence = namedConsequences != null ? namedConsequences.get(consequenceName) : null;
         return consequence == null && parent != null ? parent.getNamedConsequence(consequenceName) : consequence;
@@ -733,6 +729,10 @@ public class RuleImpl implements Externalizable,
      */
     public boolean isSemanticallyValid() {
         return isSet(SEMANTICALLY_VALID_BIT);
+    }
+
+    public boolean hasCalendars() {
+        return calendars != null && calendars.length > 0;
     }
 
     public String[] getCalendars() {
@@ -877,6 +877,14 @@ public class RuleImpl implements Externalizable,
         return ruleUnitClassName != null;
     }
 
+    public Declaration[] findEnabledDeclarations(Map<String, Declaration> decls) {
+        return this.enabled.findDeclarations(decls);
+    }
+
+    public Declaration[] findSalienceDeclarations(Map<String, Declaration> decls) {
+        return this.salience.findDeclarations(decls);
+    }
+
     public static class SafeSalience implements Salience, Serializable {
         private static final long serialVersionUID = 1L;
         private final Salience delegate;
@@ -913,21 +921,11 @@ public class RuleImpl implements Externalizable,
 
         @Override
         public boolean getValue(final Tuple tuple,
-                                final Declaration[] declrs,
+                                final Declaration[] declarations,
                                 final RuleImpl rule,
                                 final WorkingMemory workingMemory) {
-            return AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> delegate.getValue(tuple, declrs, rule, workingMemory), KiePolicyHelper.getAccessContext());
+            return AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> delegate.getValue(tuple, declarations, rule, workingMemory), KiePolicyHelper.getAccessContext());
         }
 
-    }
-    public static String getMethodBytecode( Class cls, String ruleClassName, String packageName, String methodName, String resource ) {
-        try (InputStream is = cls.getClassLoader().getResourceAsStream(resource)) {
-            byte[] data = readBytesFromInputStream( is );
-            org.drools.core.util.asm.MethodComparator.Tracer visit = new org.drools.core.util.asm.MethodComparator.Tracer(methodName);
-            new org.mvel2.asm.ClassReader( data ).accept( visit, org.mvel2.asm.ClassReader.SKIP_DEBUG  );
-            return visit.getText();
-        } catch ( java.io.IOException e ) {
-            throw new RuntimeException("Unable getResourceAsStream for Class '" + ruleClassName+ "' ");
-        }
     }
 }

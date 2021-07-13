@@ -1,0 +1,20 @@
+package org.drools.mvel.parser;
+
+import blah.*;
+
+unit Example;
+
+rule fooBar {
+    Foo foo : /blah/baz[x == "test"],
+    var whatever : /blah/baz[y],
+    do System.out.println("hello");
+
+    Blah blah = /a/b/c,
+    do {
+        System.out.println("more hello");
+    }
+
+    var xx : /blah/baz[y],
+
+}
+

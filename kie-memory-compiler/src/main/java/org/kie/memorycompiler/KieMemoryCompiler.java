@@ -13,31 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.kie.memorycompiler;
 
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.stream.Collectors;
 
-import javax.tools.Diagnostic;
-import javax.tools.DiagnosticCollector;
-import javax.tools.JavaCompiler;
-import javax.tools.JavaFileObject;
-import javax.tools.ToolProvider;
+import org.kie.memorycompiler.resources.MemoryResourceReader;
+import org.kie.memorycompiler.resources.MemoryResourceStore;
 
 public class KieMemoryCompiler {
 
-    private static final JavaCompiler JAVA_COMPILER = ToolProvider.getSystemJavaCompiler();
-    private static final List<String> OPTIONS = Arrays.asList("-source", "1.8", "-target", "1.8", "-encoding", "UTF-8");
-
-    private KieMemoryCompiler() {
-    }
+    private KieMemoryCompiler() { }
 
     /**
-     * Compile the given sources and add compiled classes to the given <code>ClassLoader</code>
+     * Compile the given sources <b>without</b> adding compiled classes to the given <code>ClassLoader</code>
      * <b>classNameSourceMap</b>' key must be the <b>FQDN</b> of the class to compile
      *
      * @param classNameSourceMap
@@ -45,23 +36,29 @@ public class KieMemoryCompiler {
      * @return
      */
     public static Map<String, Class<?>> compile(Map<String, String> classNameSourceMap, ClassLoader classLoader) {
-        Map<String, KieMemoryCompilerSourceCode> sourceCodes = classNameSourceMap.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey,
-                                                                                                                               entry -> new KieMemoryCompilerSourceCode(entry.getKey(), entry.getValue())));
-        KieMemoryCompilerClassLoader kieMemoryCompilerClassLoader = new KieMemoryCompilerClassLoader(classLoader);
-        DiagnosticCollector<JavaFileObject> collector = new DiagnosticCollector<>();
-        KieMemoryCompilerFileManager fileManager = new KieMemoryCompilerFileManager(JAVA_COMPILER.getStandardFileManager(null, null, null), kieMemoryCompilerClassLoader);
-        JavaCompiler.CompilationTask task = JAVA_COMPILER.getTask(null, fileManager, collector, OPTIONS, null, sourceCodes.values());
+        return compile(classNameSourceMap, classLoader, null);
+    }
 
-        boolean compilationSuccess = task.call();
-        boolean hasCompilerError = collector.getDiagnostics().stream().anyMatch(d -> d.getKind().equals(Diagnostic.Kind.ERROR));
-        if (!compilationSuccess || hasCompilerError) {
-            compilerError(collector);
-        }
+    /**
+     * Compile the given sources <b>without</b> adding compiled classes to the given <code>ClassLoader</code>
+     * <b>classNameSourceMap</b>' key must be the <b>FQDN</b> of the class to compile.
+     * Additional compiler settings can be provided using JavaCompilerSettings
+     *
+     * @param classNameSourceMap
+     * @param classLoader
+     * @param compilerSettings
+     * @return
+     */
+    public static Map<String, Class<?>> compile(Map<String, String> classNameSourceMap, ClassLoader classLoader, JavaCompilerSettings compilerSettings) {
+        Map<String, byte[]> byteCode = compileNoLoad(classNameSourceMap, classLoader, compilerSettings);
+
+        MemoryCompilerClassLoader kieMemoryCompilerClassLoader = new MemoryCompilerClassLoader(classLoader);
 
         Map<String, Class<?>> toReturn = new HashMap<>();
-        for (String className : sourceCodes.keySet()) {
+        for (Map.Entry<String, byte[]> entry : byteCode.entrySet()) {
+            kieMemoryCompilerClassLoader.addCode( entry.getKey(), entry.getValue() );
             try {
-                toReturn.put(className, kieMemoryCompilerClassLoader.loadClass(className));
+                toReturn.put(entry.getKey(), kieMemoryCompilerClassLoader.loadClass(entry.getKey()));
             } catch (ClassNotFoundException e) {
                 throw new KieMemoryCompilerException(e.getMessage(), e);
             }
@@ -69,19 +66,115 @@ public class KieMemoryCompiler {
         return toReturn;
     }
 
-    private static void compilerError(DiagnosticCollector<JavaFileObject> collector) {
-        StringBuilder errorBuilder = new StringBuilder();
-        errorBuilder.append("Compilation failed");
-        for (Diagnostic<? extends JavaFileObject> diagnostic : collector.getDiagnostics()) {
-            errorBuilder.append(" file: ");
-            errorBuilder.append(diagnostic.getSource());
-            errorBuilder.append("\r\n");
-            errorBuilder.append(diagnostic.getKind());
-            errorBuilder.append("; line: ");
-            errorBuilder.append(diagnostic.getLineNumber());
-            errorBuilder.append("; ");
-            errorBuilder.append(diagnostic.getMessage(Locale.US));
+    /**
+     * Compile the given sources and returns the generated byte codes
+     *
+     * @param classNameSourceMap
+     * @param classLoader
+     * @return
+     */
+    public static Map<String, byte[]> compileNoLoad(Map<String, String> classNameSourceMap, ClassLoader classLoader) {
+        return compileNoLoad(classNameSourceMap, classLoader, null, JavaConfiguration.CompilerType.NATIVE);
+    }
+
+    /**
+     * Compile the given sources and returns the generated byte codes
+     *
+     * @param classNameSourceMap
+     * @param classLoader
+     * @return
+     */
+    public static Map<String, byte[]> compileNoLoad(Map<String, String> classNameSourceMap, ClassLoader classLoader, JavaConfiguration.CompilerType compilerType) {
+        return compileNoLoad(classNameSourceMap, classLoader, null, compilerType);
+    }
+
+    /**
+     * Compile the given sources and returns the generated byte codes.
+     * Additional compiler settings can be provided using JavaCompilerSettings
+     *
+     * @param classNameSourceMap
+     * @param classLoader
+     * @param compilerSettings
+     * @return
+     */
+    public static Map<String, byte[]> compileNoLoad(Map<String, String> classNameSourceMap, ClassLoader classLoader, JavaCompilerSettings compilerSettings) {
+        return compileNoLoad(classNameSourceMap, classLoader, compilerSettings, JavaConfiguration.CompilerType.NATIVE);
+    }
+
+    /**
+     * Compile the given sources and returns the generated byte codes.
+     * Additional compiler settings can be provided using JavaCompilerSettings
+     *
+     * @param classNameSourceMap
+     * @param classLoader
+     * @param compilerSettings
+     * @return
+     */
+    public static Map<String, byte[]> compileNoLoad(Map<String, String> classNameSourceMap, ClassLoader classLoader, JavaCompilerSettings compilerSettings, JavaConfiguration.CompilerType compilerType) {
+        MemoryResourceReader reader = new MemoryResourceReader();
+        MemoryResourceStore store = new MemoryResourceStore();
+        String[] classNames = new String[classNameSourceMap.size()];
+
+        int i = 0;
+        for (Map.Entry<String, String> entry : classNameSourceMap.entrySet()) {
+            classNames[i] = toJavaSource( entry.getKey() );
+            reader.add( classNames[i], entry.getValue().getBytes());
+            i++;
         }
-        throw new KieMemoryCompilerException(errorBuilder.toString());
+        JavaConfiguration javaConfiguration = new JavaConfiguration();
+        javaConfiguration.setCompiler(compilerType);
+        javaConfiguration.setJavaLanguageLevel("1.8");
+        JavaCompiler compiler = JavaCompilerFactory.loadCompiler(javaConfiguration);
+        CompilationResult res = compilerSettings == null ?
+                compiler.compile( classNames, reader, store, classLoader) :
+                compiler.compile( classNames, reader, store, classLoader, compilerSettings);
+
+        if (res.getErrors().length > 0) {
+            throw new KieMemoryCompilerException(Arrays.toString( res.getErrors() ));
+        }
+
+        Map<String, byte[]> toReturn = new HashMap<>();
+        for (Map.Entry<String, byte[]> entry : store.getResources().entrySet()) {
+            toReturn.put(toClassName( entry.getKey() ), entry.getValue());
+        }
+
+        return toReturn;
+    }
+
+    private static String toJavaSource( String s ) {
+        return s.replace( '.', '/' ) + ".java";
+    }
+
+    private static String toClassSource( String s ) {
+        return s.replace( '.', '/' ) + ".class";
+    }
+
+    private static String toClassName( String s ) {
+        if (s.endsWith(".class")) {
+            s = s.substring(0, s.length()-6);
+        }
+        return s.replace( '/', '.' );
+    }
+
+    public static class MemoryCompilerClassLoader extends ClassLoader {
+
+        private Map<String, byte[]> customCompiledCode = new HashMap<>();
+
+        public MemoryCompilerClassLoader(ClassLoader parent) {
+            super(parent);
+        }
+
+        public void addCode(String name, byte[] bytes) {
+            customCompiledCode.put(name, bytes);
+        }
+
+        @Override
+        protected Class<?> findClass(String name) throws ClassNotFoundException {
+            byte[] byteCode = customCompiledCode.get(name);
+            if (byteCode == null) {
+                return super.findClass(name);
+            }
+            return defineClass(name, byteCode, 0, byteCode.length);
+        }
     }
 }

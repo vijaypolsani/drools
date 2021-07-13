@@ -25,7 +25,7 @@ import org.kie.dmn.api.core.DMNMessage;
 import org.kie.dmn.api.core.DMNMessageType;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.kie.dmn.validation.DMNValidator.Validation.VALIDATE_COMPILATION;
 import static org.kie.dmn.validation.DMNValidator.Validation.VALIDATE_MODEL;
@@ -362,5 +362,32 @@ public class ValidatorDecisionTest extends AbstractValidatorTest {
                                "DECISION_DEADLY_KITE"),
                 VALIDATE_MODEL, VALIDATE_COMPILATION );
         assertThat(ValidatorUtil.formatMessages(validate), validate.size(), is(0));
+    }
+
+    @Test
+    public void testDECISION_MISSING_REQ_ReaderInput() throws IOException { // ELEMREF_MISSING
+        try (final Reader reader = getReader("decision/DECISION_MISSING_REQ.dmn")) {
+            final List<DMNMessage> validate = validator.validate(reader, VALIDATE_SCHEMA, VALIDATE_MODEL);
+            assertThat(ValidatorUtil.formatMessages(validate), validate.size(), is(1));
+            assertTrue(validate.stream().anyMatch(p -> p.getMessageType().equals(DMNMessageType.REQ_NOT_FOUND)));
+        }
+    }
+    
+    @Test
+    public void testDECISION_MISSING_REQ_FileInput() {
+        final List<DMNMessage> validate = validator.validate( getFile("decision/DECISION_MISSING_REQ.dmn"), VALIDATE_SCHEMA, VALIDATE_MODEL );
+        assertThat(ValidatorUtil.formatMessages(validate), validate.size(), is(1));
+        assertTrue(validate.stream().anyMatch(p -> p.getMessageType().equals(DMNMessageType.REQ_NOT_FOUND)));
+    }
+
+    @Test
+    public void testDECISION_MISSING_REQ_DefinitionsInput() {
+        final List<DMNMessage> validate = validator.validate(
+                getDefinitions("decision/DECISION_MISSING_REQ.dmn",
+                               "https://github.com/kiegroup/kie-dmn",
+                               "DECISION_MISSING_REQ"),
+                VALIDATE_MODEL );
+        assertThat(ValidatorUtil.formatMessages(validate), validate.size(), is(1));
+        assertTrue(validate.stream().anyMatch(p -> p.getMessageType().equals(DMNMessageType.REQ_NOT_FOUND)));
     }
 }

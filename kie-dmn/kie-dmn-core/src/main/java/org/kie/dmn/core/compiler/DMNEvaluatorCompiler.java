@@ -43,6 +43,7 @@ import org.kie.dmn.core.ast.DMNListEvaluator;
 import org.kie.dmn.core.ast.DMNLiteralExpressionEvaluator;
 import org.kie.dmn.core.ast.DMNRelationEvaluator;
 import org.kie.dmn.core.ast.EvaluatorResultImpl;
+import org.kie.dmn.core.compiler.alphanetbased.AlphaNetDMNEvaluatorCompiler;
 import org.kie.dmn.core.compiler.execmodelbased.DMNRuleClassFile;
 import org.kie.dmn.core.compiler.execmodelbased.ExecModelDMNClassLoaderCompiler;
 import org.kie.dmn.core.compiler.execmodelbased.ExecModelDMNEvaluatorCompiler;
@@ -92,7 +93,7 @@ import org.slf4j.LoggerFactory;
 
 import static java.util.stream.Collectors.toList;
 
-public class DMNEvaluatorCompiler {
+public class DMNEvaluatorCompiler implements DMNDecisionLogicCompiler {
 
     private static final Logger logger = LoggerFactory.getLogger( DMNEvaluatorCompiler.class );
 
@@ -116,12 +117,16 @@ public class DMNEvaluatorCompiler {
         } else if (dmnCompilerConfig.isUseExecModelCompiler()) {
             logger.debug("Using ExecModelDMNEvaluatorCompiler.");
             return new ExecModelDMNEvaluatorCompiler(dmnCompiler);
+        } else if (dmnCompilerConfig.isUseAlphaNetwork()) {
+            logger.debug("Using AlphaNetDMNEvaluatorCompiler.");
+            return new AlphaNetDMNEvaluatorCompiler(dmnCompiler);
         } else {
             logger.debug("default DMNEvaluatorCompiler.");
             return new DMNEvaluatorCompiler(dmnCompiler);
         }
     }
 
+    @Override
     public DMNExpressionEvaluator compileExpression(DMNCompilerContext ctx, DMNModelImpl model, DMNBaseNode node, String exprName, Expression expression) {
         if ( expression == null ) {
             if( node instanceof DecisionNode ) {
@@ -598,7 +603,21 @@ public class DMNEvaluatorCompiler {
                 QName resolvedInputExpressionTypeRef = DMNCompilerImpl.getNamespaceAndName(ic.getInputExpression(), model.getImportAliasesForNS(), inputExpressionTypeRef, model.getNamespace());
                 BaseDMNTypeImpl typeRef = (BaseDMNTypeImpl) model.getTypeRegistry().resolveType(resolvedInputExpressionTypeRef.getNamespaceURI(), resolvedInputExpressionTypeRef.getLocalPart());
                 inputType = typeRef;
-                inputValues = typeRef.getAllowedValuesFEEL();
+                if (inputType == null) {
+                    MsgUtil.reportMessage(logger,
+                                          DMNMessage.Severity.ERROR,
+                                          dt,
+                                          model,
+                                          null,
+                                          null,
+                                          Msg.WRONG_TYPEREF_FOR_COLUMN,
+                                          index,
+                                          inputExpressionText,
+                                          inputExpressionTypeRef);
+                    inputType = model.getTypeRegistry().unknown();
+                } else {
+                    inputValues = typeRef.getAllowedValuesFEEL();
+                }
             }
             CompiledExpression compiledInput = ctx.getFeelHelper().compileFeelExpression(
                     ctx,

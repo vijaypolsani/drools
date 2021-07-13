@@ -84,13 +84,14 @@ public class RuleNetworkEvaluator {
     private static final PhreakNotNode          pNotNode    = PhreakNetworkNodeFactory.Factory.get().createPhreakNotNode();
     private static final PhreakExistsNode       pExistsNode = PhreakNetworkNodeFactory.Factory.get().createPhreakExistsNode();
     private static final PhreakAccumulateNode   pAccNode    = PhreakNetworkNodeFactory.Factory.get().createPhreakAccumulateNode();
+    private static final PhreakAccumulateNode   pGroupByNode = PhreakNetworkNodeFactory.Factory.get().createPhreakGroupByNode();
     private static final PhreakBranchNode       pBranchNode = PhreakNetworkNodeFactory.Factory.get().createPhreakBranchNode();
     private static final PhreakQueryNode        pQueryNode  = PhreakNetworkNodeFactory.Factory.get().createPhreakQueryNode();
     private static final PhreakTimerNode        pTimerNode  = PhreakNetworkNodeFactory.Factory.get().createPhreakTimerNode();
     private static final PhreakAsyncSendNode    pSendNode   = PhreakNetworkNodeFactory.Factory.get().createPhreakAsyncSendNode();
     private static final PhreakAsyncReceiveNode pReceiveNode = PhreakNetworkNodeFactory.Factory.get().createPhreakAsyncReceiveNode();
     private static final PhreakRuleTerminalNode pRtNode     = PhreakNetworkNodeFactory.Factory.get().createPhreakRuleTerminalNode();
-    private static PhreakQueryTerminalNode      pQtNode     = PhreakNetworkNodeFactory.Factory.get().createPhreakQueryTerminalNode();
+    private static final PhreakQueryTerminalNode pQtNode     = PhreakNetworkNodeFactory.Factory.get().createPhreakQueryTerminalNode();
 
     private static int cycle = 0;
 
@@ -580,8 +581,12 @@ public class RuleNetworkEvaluator {
                 break;
             }
             case NodeTypeEnums.AccumulateNode: {
-                pAccNode.doNode((AccumulateNode) node, sink, am, wm,
-                                srcTuples, trgTuples, stagedLeftTuples);
+                AccumulateNode accumulateNode = (AccumulateNode) node;
+                if (accumulateNode.getAccumulate().isGroupBy()) {
+                    pGroupByNode.doNode( accumulateNode, sink, am, wm, srcTuples, trgTuples, stagedLeftTuples );
+                } else {
+                    pAccNode.doNode( accumulateNode, sink, am, wm, srcTuples, trgTuples, stagedLeftTuples );
+                }
                 break;
             }
         }
@@ -804,7 +809,9 @@ public class RuleNetworkEvaluator {
 
         // sides must first be re-ordered, to ensure iteration integrity
         for (LeftTuple leftTuple = srcLeftTuples.getUpdateFirst(); leftTuple != null; leftTuple = leftTuple.getStagedNext()) {
-            ltm.remove(leftTuple);
+            if (leftTuple.getMemory() != null) {
+                ltm.remove(leftTuple);
+            }
         }
 
         for (LeftTuple leftTuple = srcLeftTuples.getUpdateFirst(); leftTuple != null; leftTuple = leftTuple.getStagedNext()) {
@@ -850,14 +857,7 @@ public class RuleNetworkEvaluator {
 
         for (RightTuple rightTuple = srcRightTuples.getUpdateFirst(); rightTuple != null; rightTuple = rightTuple.getStagedNext()) {
             if ( rightTuple.getMemory() != null ) {
-                rightTuple.setTempRightTupleMemory(rightTuple.getMemory());
-                rtm.remove(rightTuple);
-            }
-        }
-
-        for (RightTuple rightTuple = srcRightTuples.getUpdateFirst(); rightTuple != null; rightTuple = rightTuple.getStagedNext()) {
-            if ( rightTuple.getTempRightTupleMemory() != null ) {
-                rtm.add(rightTuple);
+                rtm.removeAdd(rightTuple);
                 doUpdatesReorderChildLeftTuple( rightTuple );
             }
         }
@@ -890,7 +890,6 @@ public class RuleNetworkEvaluator {
 
         for (RightTuple rightTuple = srcRightTuples.getUpdateFirst(); rightTuple != null; rightTuple = rightTuple.getStagedNext()) {
             if (rightTuple.getMemory() != null) {
-                rightTuple.setTempRightTupleMemory(rightTuple.getMemory());
 
                 if (resumeFromCurrent) {
                     if (rightTuple.getBlocked() != null) {
@@ -924,8 +923,7 @@ public class RuleNetworkEvaluator {
             rtm.add( rightTuple );
 
             if (resumeFromCurrent) {
-                RightTuple tempRightTuple = rightTuple.getTempNextRightTuple();
-                if ( rightTuple.getBlocked() != null && tempRightTuple == null && rightTuple.getMemory() == rightTuple.getTempRightTupleMemory()  ) {
+                if ( rightTuple.getBlocked() != null && rightTuple.getTempNextRightTuple() == null ) {
                     // the next RightTuple was null, but current RightTuple was added back into the same bucket, so reset as root blocker to re-match can be attempted
                     rightTuple.setTempNextRightTuple( rightTuple );
                 }
@@ -941,11 +939,11 @@ public class RuleNetworkEvaluator {
         }
     }
 
-    public static boolean useLeftMemory(LeftTupleSource tupleSource, Tuple leftTuple) {
+    public static boolean useLeftMemory(LeftTupleSource tupleSource, Tuple tuple) {
         boolean useLeftMemory = true;
         if (!tupleSource.isLeftTupleMemoryEnabled()) {
             // This is a hack, to not add closed DroolsQuery objects
-            Object object = leftTuple.getRootTuple().getFactHandle().getObject();
+            Object object = tuple.getRootTuple().getFactHandle().getObject();
             if (!(object instanceof DroolsQuery) || !((DroolsQuery) object).isOpen()) {
                 useLeftMemory = false;
             }

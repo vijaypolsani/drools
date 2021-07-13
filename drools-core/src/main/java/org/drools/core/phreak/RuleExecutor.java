@@ -27,6 +27,7 @@ import org.drools.core.common.InternalFactHandle;
 import org.drools.core.common.InternalWorkingMemory;
 import org.drools.core.conflict.PhreakConflictResolver;
 import org.drools.core.definitions.rule.impl.RuleImpl;
+import org.drools.core.event.RuleEventListenerSupport;
 import org.drools.core.reteoo.PathMemory;
 import org.drools.core.reteoo.RuleTerminalNode;
 import org.drools.core.reteoo.RuleTerminalNodeLeftTuple;
@@ -85,8 +86,21 @@ public class RuleExecutor {
                                        AgendaFilter filter,
                                        int fireCount,
                                        int fireLimit ) {
+        InternalWorkingMemory wm = agenda.getWorkingMemory();
+
         reEvaluateNetwork( agenda );
-        return fire(agenda.getWorkingMemory(), agenda, filter, fireCount, fireLimit);
+
+        if ( wm.getSessionConfiguration().isDirectFiring() ) {
+            int directFirings = tupleList.size();
+            for (Tuple tuple = tupleList.getFirst(); tuple != null; tuple = tupleList.getFirst()) {
+                innerFireActivation( wm, agenda, (Activation) tuple, ((Activation) tuple).getConsequence() );
+                removeLeftTuple( tuple );
+            }
+            ruleAgendaItem.remove();
+            return directFirings;
+        }
+
+        return fire( wm, agenda, filter, fireCount, fireLimit );
     }
 
     public void fire(InternalAgenda agenda) {
@@ -112,9 +126,10 @@ public class RuleExecutor {
 
             RuleTerminalNode rtn = (RuleTerminalNode) pmem.getPathEndNode();
             RuleImpl rule = rtn.getRule();
+            boolean ruleIsAllMatches = rule.isAllMatches();
             Tuple tuple = getNextTuple();
             
-            if (rule.isAllMatches()) {
+            if (ruleIsAllMatches) {
                 fireConsequenceEvent(wm, agenda, (AgendaItem) tuple, DefaultAgenda.ON_BEFORE_ALL_FIRES_CONSEQUENCE_NAME);
             }
 
@@ -149,7 +164,7 @@ public class RuleExecutor {
                     ruleAgendaItem.getAgendaGroup().add( ruleAgendaItem );
                 }
 
-                if (!rule.isAllMatches()) { // if firing rule is @All don't give way to other rules
+                if (!ruleIsAllMatches) { // if firing rule is @All don't give way to other rules
                     if ( haltRuleFiring( fireCount, fireLimit, localFireCount, agenda ) ) {
                         break; // another rule has high priority and is on the agenda, so evaluate it first
                     }
@@ -159,7 +174,7 @@ public class RuleExecutor {
                 }
             }
 
-            if (rule.isAllMatches()) {
+            if (ruleIsAllMatches) {
                 fireConsequenceEvent(wm, agenda, (AgendaItem) lastTuple, DefaultAgenda.ON_AFTER_ALL_FIRES_CONSEQUENCE_NAME);
             }
         }
@@ -228,7 +243,7 @@ public class RuleExecutor {
             return true;
         }
 
-        if (rule.getCalendars() != null) {
+        if (rule.hasCalendars()) {
             long timestamp = wm.getSessionClock().getCurrentTime();
             for (String cal : rule.getCalendars()) {
                 if (!wm.getCalendars().get(cal).isTimeIncluded(timestamp)) {
@@ -380,8 +395,8 @@ public class RuleExecutor {
                 innerFireActivation( wm, agenda, activation, activation.getConsequence() );
             } finally {
                 // if the tuple contains expired events
-                for ( Tuple tuple = activation.getTuple(); tuple != null; tuple = tuple.getParent() ) {
-                    if ( tuple.getFactHandle() != null && tuple.getFactHandle().isEvent() ) {
+                for ( Tuple tuple = activation.getTuple().skipEmptyHandles(); tuple != null; tuple = tuple.getParent() ) {
+                    if ( tuple.getFactHandle().isEvent() ) {
                         // can be null for eval, not and exists that have no right input
 
                         EventFactHandle handle = ( EventFactHandle ) tuple.getFactHandle();
@@ -423,13 +438,15 @@ public class RuleExecutor {
         try {
             KnowledgeHelper knowledgeHelper = agenda.getKnowledgeHelper();
             knowledgeHelper.setActivation( activation );
+
             if ( log.isTraceEnabled() ) {
                 log.trace( "Fire event {} for rule \"{}\" \n{}", consequence.getName(), activation.getRule().getName(), activation.getTuple() );
             }
 
-            wm.getRuleEventSupport().onBeforeMatchFire( activation );
+            RuleEventListenerSupport ruleEventSupport = wm.getRuleEventSupport();
+            ruleEventSupport.onBeforeMatchFire( activation );
             consequence.evaluate(knowledgeHelper, wm);
-            wm.getRuleEventSupport().onAfterMatchFire( activation );
+            ruleEventSupport.onAfterMatchFire( activation );
 
             activation.setActive(false);
             knowledgeHelper.cancelRemainingPreviousLogicalDependencies();

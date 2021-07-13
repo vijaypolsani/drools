@@ -51,18 +51,21 @@ import static org.junit.Assert.fail;
  */
 public class ExternalisedLambdaTest extends BaseModelTest {
 
+    private boolean checkNonExternalisedLambdaOrig;
+
     public ExternalisedLambdaTest(RUN_TYPE testRunType) {
         super(testRunType);
     }
 
     @Before
     public void init() {
+        checkNonExternalisedLambdaOrig = RuleWriter.isCheckNonExternalisedLambda();
         RuleWriter.setCheckNonExternalisedLambda(true);
     }
 
     @After
     public void clear() {
-        RuleWriter.setCheckNonExternalisedLambda(false);
+        RuleWriter.setCheckNonExternalisedLambda(checkNonExternalisedLambdaOrig);
     }
 
     @Test
@@ -276,7 +279,7 @@ public class ExternalisedLambdaTest extends BaseModelTest {
         assertEquals(1, results.size());
         assertEquals(77, ((Number) results.iterator().next().getValue()).intValue());
     }
-  
+
     @Test
     public void testOOPath() {
         final String str =

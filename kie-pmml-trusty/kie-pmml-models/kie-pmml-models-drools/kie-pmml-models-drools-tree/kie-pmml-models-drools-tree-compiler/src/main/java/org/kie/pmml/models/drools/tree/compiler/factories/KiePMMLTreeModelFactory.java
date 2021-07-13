@@ -22,16 +22,16 @@ import java.util.Map;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
-import com.github.javaparser.ast.expr.NameExpr;
-import com.github.javaparser.ast.expr.SimpleName;
 import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.stmt.ExplicitConstructorInvocationStmt;
 import org.dmg.pmml.DataDictionary;
 import org.dmg.pmml.TransformationDictionary;
 import org.dmg.pmml.tree.TreeModel;
-import org.kie.memorycompiler.KieMemoryCompiler;
-import org.kie.pmml.commons.exceptions.KiePMMLException;
-import org.kie.pmml.commons.exceptions.KiePMMLInternalException;
+import org.kie.pmml.api.exceptions.KiePMMLException;
+import org.kie.pmml.api.exceptions.KiePMMLInternalException;
+import org.kie.pmml.commons.model.HasClassLoader;
+import org.kie.pmml.compiler.commons.builders.KiePMMLModelCodegenUtils;
+import org.kie.pmml.compiler.commons.utils.CommonCodegenUtils;
 import org.kie.pmml.models.drools.ast.KiePMMLDroolsAST;
 import org.kie.pmml.models.drools.ast.KiePMMLDroolsType;
 import org.kie.pmml.models.drools.tree.model.KiePMMLTreeModel;
@@ -39,49 +39,62 @@ import org.kie.pmml.models.drools.tuples.KiePMMLOriginalTypeGeneratedType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static org.kie.pmml.commons.Constants.MISSING_CONSTRUCTOR_IN_BODY;
+import static org.kie.pmml.commons.Constants.MISSING_DEFAULT_CONSTRUCTOR;
 import static org.kie.pmml.commons.utils.KiePMMLModelUtils.getSanitizedClassName;
-import static org.kie.pmml.commons.utils.KiePMMLModelUtils.getSanitizedPackageName;
 import static org.kie.pmml.compiler.commons.utils.JavaParserUtils.MAIN_CLASS_NOT_FOUND;
-import static org.kie.pmml.compiler.commons.utils.KiePMMLModelFactoryUtils.addTransformationsInClassOrInterfaceDeclaration;
 import static org.kie.pmml.models.drools.utils.KiePMMLDroolsModelFactoryUtils.getKiePMMLModelCompilationUnit;
 
 /**
- * Class used to generate <code>KiePMMLTreeModel</code> out of a <code>DataDictionary</code> and a <code>TreeModel</code>
+ * Class used to generate <code>KiePMMLTreeModel</code> out of a <code>DataDictionary</code> and a
+ * <code>TreeModel</code>
  */
 public class KiePMMLTreeModelFactory {
 
-    private static final Logger logger = LoggerFactory.getLogger(KiePMMLTreeModelFactory.class.getName());
-
     static final String KIE_PMML_TREE_MODEL_TEMPLATE_JAVA = "KiePMMLTreeModelTemplate.tmpl";
     static final String KIE_PMML_TREE_MODEL_TEMPLATE = "KiePMMLTreeModelTemplate";
+    private static final Logger logger = LoggerFactory.getLogger(KiePMMLTreeModelFactory.class.getName());
 
     private KiePMMLTreeModelFactory() {
         // Avoid instantiation
     }
 
-    public static KiePMMLTreeModel getKiePMMLTreeModel(final DataDictionary dataDictionary, final TransformationDictionary transformationDictionary, final TreeModel model, final Map<String, KiePMMLOriginalTypeGeneratedType> fieldTypeMap) throws IllegalAccessException, InstantiationException {
-        logger.trace("getKiePMMLTreeModel {}", model);
+    public static KiePMMLTreeModel getKiePMMLTreeModel(final DataDictionary dataDictionary,
+                                                       final TransformationDictionary transformationDictionary,
+                                                       final TreeModel model,
+                                                       final Map<String, KiePMMLOriginalTypeGeneratedType> fieldTypeMap,
+                                                       final String packageName,
+                                                       final HasClassLoader hasClassLoader) throws IllegalAccessException, InstantiationException {
+        logger.trace("getKiePMMLTreeModel {} {}", packageName, model);
         String className = getSanitizedClassName(model.getModelName());
-        String packageName = getSanitizedPackageName(className);
-        Map<String, String> sourcesMap = getKiePMMLTreeModelSourcesMap(dataDictionary, transformationDictionary, model, fieldTypeMap, packageName);
+        Map<String, String> sourcesMap = getKiePMMLTreeModelSourcesMap(dataDictionary, transformationDictionary,
+                                                                       model, fieldTypeMap, packageName);
         String fullClassName = packageName + "." + className;
-        final Map<String, Class<?>> compiledClasses = KieMemoryCompiler.compile(sourcesMap, Thread.currentThread().getContextClassLoader());
-        return (KiePMMLTreeModel) compiledClasses.get(fullClassName).newInstance();
+        try {
+            Class<?> kiePMMLScorecardModelClass = hasClassLoader.compileAndLoadClass(sourcesMap, fullClassName);
+            return (KiePMMLTreeModel) kiePMMLScorecardModelClass.newInstance();
+        } catch (Exception e) {
+            throw new KiePMMLException(e);
+        }
     }
 
     public static Map<String, String> getKiePMMLTreeModelSourcesMap(final DataDictionary dataDictionary,
                                                                     final TransformationDictionary transformationDictionary,
                                                                     final TreeModel model,
-                                                                    final Map<String, KiePMMLOriginalTypeGeneratedType> fieldTypeMap,
+                                                                    final Map<String,
+                                                                            KiePMMLOriginalTypeGeneratedType> fieldTypeMap,
                                                                     final String packageName) {
         logger.trace("getKiePMMLTreeModelSourcesMap {} {} {}", dataDictionary, model, packageName);
-        CompilationUnit cloneCU = getKiePMMLModelCompilationUnit(dataDictionary, model, fieldTypeMap, packageName, KIE_PMML_TREE_MODEL_TEMPLATE_JAVA, KIE_PMML_TREE_MODEL_TEMPLATE);
+        CompilationUnit cloneCU = getKiePMMLModelCompilationUnit(dataDictionary, model, fieldTypeMap, packageName,
+                                                                 KIE_PMML_TREE_MODEL_TEMPLATE_JAVA,
+                                                                 KIE_PMML_TREE_MODEL_TEMPLATE);
         String className = getSanitizedClassName(model.getModelName());
         ClassOrInterfaceDeclaration modelTemplate = cloneCU.getClassByName(className)
                 .orElseThrow(() -> new KiePMMLException(MAIN_CLASS_NOT_FOUND + ": " + className));
-        final ConstructorDeclaration constructorDeclaration = modelTemplate.getDefaultConstructor().orElseThrow(() -> new KiePMMLInternalException(String.format("Missing default constructor in ClassOrInterfaceDeclaration %s ", modelTemplate.getName())));
-        setSuperInvocation(model, constructorDeclaration, modelTemplate.getName());
-        addTransformationsInClassOrInterfaceDeclaration(modelTemplate, transformationDictionary, model.getLocalTransformations());
+        setConstructor(model,
+                       dataDictionary,
+                       transformationDictionary,
+                       modelTemplate);
         Map<String, String> toReturn = new HashMap<>();
         String fullClassName = packageName + "." + className;
         toReturn.put(fullClassName, cloneCU.toString());
@@ -89,9 +102,9 @@ public class KiePMMLTreeModelFactory {
     }
 
     /**
-     * This method returns a <code>KiePMMLDroolsAST</code> out of the given <code>DataDictionary</code> and <code>TreeModel</code>.
+     * This method returns a <code>KiePMMLDroolsAST</code> out of the given <code>DataDictionary</code> and
+     * <code>TreeModel</code>.
      * <b>It also populate the given <code>Map</code> that has to be used for final <code>KiePMMLTreeModel</code></b>
-     *
      * @param dataDictionary
      * @param model
      * @param fieldTypeMap
@@ -106,17 +119,23 @@ public class KiePMMLTreeModelFactory {
         return KiePMMLTreeModelASTFactory.getKiePMMLDroolsAST(dataDictionary, model, fieldTypeMap, types);
     }
 
-    static void setSuperInvocation(final TreeModel treeModel, final ConstructorDeclaration constructorDeclaration, final SimpleName tableName) {
-        constructorDeclaration.setName(tableName);
+    static void setConstructor(final TreeModel treeModel,
+                               final DataDictionary dataDictionary,
+                               final TransformationDictionary transformationDictionary,
+                               final ClassOrInterfaceDeclaration modelTemplate) {
+        KiePMMLModelCodegenUtils.init(modelTemplate,
+                                      dataDictionary,
+                                      transformationDictionary,
+                                      treeModel);
+        final ConstructorDeclaration constructorDeclaration =
+                modelTemplate.getDefaultConstructor().orElseThrow(() -> new KiePMMLInternalException(String.format(MISSING_DEFAULT_CONSTRUCTOR, modelTemplate.getName())));
         final BlockStmt body = constructorDeclaration.getBody();
-        body.getStatements().iterator().forEachRemaining(statement -> {
-            if (statement instanceof ExplicitConstructorInvocationStmt) {
-                ExplicitConstructorInvocationStmt superStatement = (ExplicitConstructorInvocationStmt) statement;
-                NameExpr modelNameExpr = (NameExpr) superStatement.getArgument(0);
-                modelNameExpr.setName(String.format("\"%s\"", treeModel.getModelName()));
-                NameExpr algorithmNameExpr = (NameExpr) superStatement.getArgument(2);
-                algorithmNameExpr.setName(String.format("\"%s\"", treeModel.getAlgorithmName()));
-            }
-        });
+
+        final ExplicitConstructorInvocationStmt superStatement =
+                CommonCodegenUtils.getExplicitConstructorInvocationStmt(body)
+                .orElseThrow(() -> new KiePMMLException(String.format(MISSING_CONSTRUCTOR_IN_BODY, body)));
+        CommonCodegenUtils.setExplicitConstructorInvocationStmtArgument(superStatement, "algorithmName",
+                                                                        String.format("\"%s\"",
+                                                                                      treeModel.getAlgorithmName()));
     }
 }

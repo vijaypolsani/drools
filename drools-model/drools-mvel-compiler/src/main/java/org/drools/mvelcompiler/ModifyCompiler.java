@@ -1,3 +1,19 @@
+/*
+ * Copyright 2021 Red Hat, Inc. and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.drools.mvelcompiler;
 
 import java.util.HashSet;
@@ -18,7 +34,7 @@ public class ModifyCompiler {
 
     private static final PreprocessPhase preprocessPhase = new PreprocessPhase(true);
 
-    public ParsingResult compile(String mvelBlock) {
+    public CompiledBlockResult compile(String mvelBlock) {
 
         BlockStmt mvelExpression = MvelParser.parseBlock(mvelBlock);
 
@@ -27,23 +43,18 @@ public class ModifyCompiler {
         Set<String> usedBindings = new HashSet<>();
         mvelExpression.findAll(ModifyStatement.class)
                 .forEach(s -> {
+                    Optional<Node> parentNode = s.getParentNode();
                     PreprocessPhase.PreprocessPhaseResult invoke = preprocessPhase.invoke(s);
                     usedBindings.addAll(invoke.getUsedBindings());
-                    Optional<Node> parentNode = s.getParentNode();
                     parentNode.ifPresent(p -> {
-                        BlockStmt replacementBlock = new BlockStmt();
-                        replacementBlock.getStatements().addAll(invoke.getNewObjectStatements());
-                        replacementBlock.getStatements().addAll(invoke.getOtherStatements());
+                        BlockStmt parentBlock = (BlockStmt) p;
                         for (String modifiedFact : invoke.getUsedBindings()) {
-                            replacementBlock.addStatement(new MethodCallExpr(null, "update", nodeList(new NameExpr(modifiedFact))));
+                            parentBlock.addStatement(new MethodCallExpr(null, "update", nodeList(new NameExpr(modifiedFact))));
                         }
-                        BlockStmt p1 = (BlockStmt) p;
-                        int index = p1.getStatements().indexOf(s);
-                        p1.addStatement(index, replacementBlock);
                     });
                     s.remove();
                 });
 
-        return new ParsingResult(mvelExpression.getStatements()).setUsedBindings(usedBindings);
+        return new CompiledBlockResult(mvelExpression.getStatements()).setUsedBindings(usedBindings);
     }
 }

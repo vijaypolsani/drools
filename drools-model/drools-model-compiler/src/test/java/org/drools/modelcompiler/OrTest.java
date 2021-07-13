@@ -24,8 +24,6 @@ import org.drools.modelcompiler.domain.Address;
 import org.drools.modelcompiler.domain.Employee;
 import org.drools.modelcompiler.domain.Person;
 import org.junit.Test;
-import org.kie.api.builder.KieBuilder;
-import org.kie.api.builder.Message;
 import org.kie.api.builder.Results;
 import org.kie.api.runtime.KieSession;
 
@@ -60,7 +58,79 @@ public class OrTest extends BaseModelTest {
         ksession.insert( new Person( "Mark", 37 ) );
         ksession.insert( new Person( "Edson", 35 ) );
         ksession.insert( new Person( "Mario", 40 ) );
-        ksession.fireAllRules();
+        assertEquals(1, ksession.fireAllRules());
+    }
+
+    @Test
+    public void testOrWhenStringFirst() {
+        String str =
+              "import " + Person.class.getCanonicalName() + ";" +
+              "import " + Address.class.getCanonicalName() + ";" +
+              "rule R when\n" +
+              "  $s : String(this == \"Go\")\n" +
+              "  ( Person(name == \"Mark\") or \n" +
+              "     (\n" +
+              "     Person(name == \"Mario\") and\n" +
+              "     Address(city == \"London\") ) )\n" +
+              "then\n" +
+              "   System.out.println(\"Found: \" + $s.getClass());\n" +
+              "end";
+
+        KieSession ksession = getKieSession( str );
+
+        ksession.insert( "Go" );
+        ksession.insert( new Person( "Mark", 37 ) );
+        ksession.insert( new Person( "Mario", 100 ) );
+        ksession.insert( new Address( "London" ) );
+        assertEquals(2, ksession.fireAllRules());
+    }
+
+
+    @Test
+    public void testOrWithBetaIndex() {
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                     "rule R when\n" +
+                     "  $p : Person(name == \"Mark\") or\n" +
+                     "  ( $mark : Person(name == \"Mark\")\n" +
+                     "    and\n" +
+                     "    $p : Person(age == $mark.age) )\n" +
+                     "  $s: String(this == $p.name)\n" +
+                     "then\n" +
+                     "  System.out.println(\"Found: \" + $s);\n" +
+                     "end";
+
+        KieSession ksession = getKieSession(str);
+
+        ksession.insert("Mario");
+        ksession.insert(new Person("Mark", 37));
+        ksession.insert(new Person("Edson", 35));
+        ksession.insert(new Person("Mario", 37));
+        assertEquals(1, ksession.fireAllRules());
+    }
+
+    @Test
+    public void testOrWithBetaIndexOffset() {
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                     "rule R when\n" +
+                     "  $e : Person(name == \"Edson\")\n" +
+                     "  $p : Person(name == \"Mark\") or\n" +
+                     "  ( $mark : Person(name == \"Mark\")\n" +
+                     "    and\n" +
+                     "    $p : Person(age == $mark.age) )\n" +
+                     "  $s: String(this == $p.name)\n" +
+                     "then\n" +
+                     "  System.out.println(\"Found: \" + $s);\n" +
+                     "end";
+
+        KieSession ksession = getKieSession(str);
+
+        ksession.insert("Mario");
+        ksession.insert(new Person("Mark", 37));
+        ksession.insert(new Person("Edson", 35));
+        ksession.insert(new Person("Mario", 37));
+        assertEquals(1, ksession.fireAllRules());
     }
 
     @Test

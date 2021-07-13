@@ -106,18 +106,6 @@ public class RuleTerminalNodeLeftTuple<T extends ModedAssertion<T>> extends Base
 
     public RuleTerminalNodeLeftTuple(final LeftTuple leftTuple,
                                      final RightTuple rightTuple,
-                                     final Sink sink,
-                                     final boolean leftTupleMemoryEnabled) {
-        this( leftTuple,
-              rightTuple,
-              null,
-              null,
-              sink,
-              leftTupleMemoryEnabled );
-    }
-
-    public RuleTerminalNodeLeftTuple(final LeftTuple leftTuple,
-                                     final RightTuple rightTuple,
                                      final LeftTuple currentLeftChild,
                                      final LeftTuple currentRightChild,
                                      final Sink sink,
@@ -361,9 +349,8 @@ public class RuleTerminalNodeLeftTuple<T extends ModedAssertion<T>> extends Base
 
     public Object getDeclarationValue(String variableName) {
         Declaration decl = getTerminalNode().getSubRule().getOuterDeclarations().get(variableName);
-        InternalFactHandle handle = get(decl);
         // need to double check, but the working memory reference is only used for resolving globals, right?
-        return decl.getValue(null, handle.getObject());
+        return decl.getValue(this);
     }
 
     public List<String> getDeclarationIds() {

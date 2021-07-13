@@ -33,7 +33,6 @@ import org.drools.core.command.impl.CommandFactoryServiceImpl;
 import org.drools.core.concurrent.ExecutorProviderImpl;
 import org.drools.core.impl.EnvironmentFactory;
 import org.drools.core.io.impl.ResourceFactoryServiceImpl;
-import org.drools.core.marshalling.impl.MarshallerProviderImpl;
 import org.kie.api.KieBaseConfiguration;
 import org.kie.api.builder.KieBuilder;
 import org.kie.api.builder.KieFileSystem;
@@ -127,12 +126,17 @@ public class KieServicesImpl implements InternalKieServices {
     }
 
     public KieContainer newKieClasspathContainer(String containerId, ClassLoader classLoader) {
+        return newKieClasspathContainer(containerId, classLoader, null);
+    }
+
+    @Override
+    public KieContainer newKieClasspathContainer(String containerId, ClassLoader classLoader, ReleaseId releaseId) {
     	if (containerId == null) {
-    	    KieContainerImpl newContainer = new KieContainerImpl(UUID.randomUUID().toString(), new ClasspathKieProject(classLoader, listener), null);
+            KieContainerImpl newContainer = new KieContainerImpl(UUID.randomUUID().toString(), new ClasspathKieProject(classLoader, listener, releaseId), null);
     	    return newContainer;
     	}
     	if ( kContainers.get(containerId) == null ) {
-            KieContainerImpl newContainer = new KieContainerImpl(containerId, new ClasspathKieProject(classLoader, listener), null);
+            KieContainerImpl newContainer = new KieContainerImpl(containerId, new ClasspathKieProject(classLoader, listener, releaseId), null, releaseId);
             KieContainer check = kContainers.putIfAbsent(containerId, newContainer);
             if (check == null) {
 				return newContainer;
@@ -226,7 +230,7 @@ public class KieServicesImpl implements InternalKieServices {
     }
 
     public KieScanner newKieScanner(KieContainer kieContainer) {
-        KieScannerFactoryService scannerFactoryService = ServiceRegistry.getInstance().get(KieScannerFactoryService.class);
+        KieScannerFactoryService scannerFactoryService = ServiceRegistry.getService(KieScannerFactoryService.class);
         if (scannerFactoryService == null) {
             throw new RuntimeException( "Cannot instance a maven based KieScanner, is kie-ci on the classpath?" );
         }
@@ -251,7 +255,11 @@ public class KieServicesImpl implements InternalKieServices {
 
     public KieMarshallers getMarshallers() {
         // instantiating directly, but we might want to use the service registry instead
-        return new MarshallerProviderImpl();
+        KieMarshallers kieMarshallers = ServiceRegistry.getService( KieMarshallers.class );
+        if (kieMarshallers == null) {
+            throw new RuntimeException("Marshaller not available, please add the module org.drools:drools-serialization-protobuf to your classpath.");
+        }
+        return kieMarshallers;
     }
 
     public KieLoggers getLoggers() {
@@ -265,7 +273,7 @@ public class KieServicesImpl implements InternalKieServices {
     }
     
     public KieStoreServices getStoreServices() {
-        return ServiceRegistry.getInstance().get( KieStoreServices.class );
+        return ServiceRegistry.getService( KieStoreServices.class );
     }
 
     public ReleaseId newReleaseId(String groupId, String artifactId, String version) {

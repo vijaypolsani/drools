@@ -5,16 +5,25 @@
   <parent>
     <groupId>org.kie</groupId>
     <artifactId>kie-pmml-trusty</artifactId>
-    <version>7.42.0-SNAPSHOT</version>
+    <version>7.58.0-SNAPSHOT</version>
   </parent>
   <modelVersion>4.0.0</modelVersion>
 
   <artifactId>kie-pmml-commons</artifactId>
 
-  <name>KIE :: PMML :: COMMONS</name>
+  <name>KIE :: PMML :: Commons</name>
   <description>Common code for PMML module</description>
 
+  <properties>
+    <sonar.coverage.exclusions>**/exceptions/**.java,**/model/predicates/**.java</sonar.coverage.exclusions>
+  </properties>
+
   <dependencies>
+    <!-- PMML -->
+    <dependency>
+      <groupId>org.kie</groupId>
+      <artifactId>kie-pmml-api</artifactId>
+    </dependency>
     <!-- EXTERNAL -->
     <dependency>
       <groupId>org.slf4j</groupId>

@@ -464,6 +464,7 @@ public abstract class ClassUtils {
                 .orElse( null );
     }
 
+    // Don't use this method. You should probably use org.drools.core.util.MethodUtils
     private static Optional<Method> getMethod(Class<?> clazz, String name, Class<?>... parameterTypes) {
         try {
             return Optional.of( clazz.getMethod(name, parameterTypes) );
@@ -473,6 +474,14 @@ public abstract class ClassUtils {
     }
 
     public static String ucFirst(final String s) {
+        if (s == null) {
+            return null;
+        }
+
+        if (s.length() == 1) {
+            return s.toUpperCase();
+        }
+
         return Character.isLowerCase(s.charAt( 0 )) ? Character.toUpperCase( s.charAt( 0 ) ) + s.substring( 1 ) : s;
     }
 
@@ -548,7 +557,7 @@ public abstract class ClassUtils {
     public static boolean isConvertible( Class<?> srcPrimitive, Class<?> tgtPrimitive ) {
         if ( Boolean.TYPE.equals( srcPrimitive ) ) {
             return Boolean.TYPE.equals( tgtPrimitive );
-        } else if ( Byte.TYPE.equals( tgtPrimitive ) ) {
+        } else if ( Byte.TYPE.equals( srcPrimitive ) ) {
             return Byte.TYPE.equals( tgtPrimitive )
                    || Short.TYPE.equals( tgtPrimitive )
                    || Integer.TYPE.equals( tgtPrimitive )

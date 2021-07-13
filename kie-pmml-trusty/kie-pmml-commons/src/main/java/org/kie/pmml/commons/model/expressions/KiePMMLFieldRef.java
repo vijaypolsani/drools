@@ -19,11 +19,21 @@ import java.util.List;
 import java.util.Objects;
 
 import org.kie.pmml.commons.model.KiePMMLExtension;
-import org.kie.pmml.commons.model.abstracts.AbstractKiePMMLBase;
+import org.kie.pmml.commons.model.KiePMMLOutputField;
+import org.kie.pmml.commons.model.abstracts.AbstractKiePMMLComponent;
+import org.kie.pmml.commons.model.tuples.KiePMMLNameValue;
+import org.kie.pmml.commons.transformations.KiePMMLDefineFunction;
+import org.kie.pmml.commons.transformations.KiePMMLDerivedField;
 
-public class KiePMMLFieldRef extends AbstractKiePMMLBase implements KiePMMLExpression {
+import static org.kie.pmml.commons.model.expressions.ExpressionsUtils.getFromPossibleSources;
 
-    private final String mapMissingTo;
+/**
+ * @see <a href=http://dmg.org/pmml/v4-4-1/Transformations.html#xsdElement_FieldRef>FieldRef</a>
+ */
+public class KiePMMLFieldRef extends AbstractKiePMMLComponent implements KiePMMLExpression {
+
+    private static final long serialVersionUID = 4576394527423997787L;
+    private String mapMissingTo;
 
     public KiePMMLFieldRef(String name, List<KiePMMLExtension> extensions, String mapMissingTo) {
         super(name, extensions);
@@ -32,6 +42,16 @@ public class KiePMMLFieldRef extends AbstractKiePMMLBase implements KiePMMLExpre
 
     public String getMapMissingTo() {
         return mapMissingTo;
+    }
+
+    @Override
+    public Object evaluate(final List<KiePMMLDefineFunction> defineFunctions,
+                           final List<KiePMMLDerivedField> derivedFields,
+                           final List<KiePMMLOutputField> outputFields,
+                           final List<KiePMMLNameValue> kiePMMLNameValues) {
+
+        return getFromPossibleSources(name, defineFunctions, derivedFields, outputFields, kiePMMLNameValues)
+                .orElse(mapMissingTo);
     }
 
     @Override
@@ -62,4 +82,5 @@ public class KiePMMLFieldRef extends AbstractKiePMMLBase implements KiePMMLExpre
     public int hashCode() {
         return Objects.hash(super.hashCode(), mapMissingTo);
     }
+
 }

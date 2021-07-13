@@ -19,19 +19,26 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.StringJoiner;
+import java.util.stream.Stream;
 
-import org.kie.pmml.commons.model.abstracts.AbstractKiePMMLBase;
-import org.kie.pmml.commons.model.enums.RESULT_FEATURE;
+import org.kie.pmml.commons.model.abstracts.AbstractKiePMMLComponent;
+import org.kie.pmml.api.enums.RESULT_FEATURE;
+import org.kie.pmml.commons.model.expressions.KiePMMLExpression;
+import org.kie.pmml.commons.model.tuples.KiePMMLNameValue;
+import org.kie.pmml.commons.transformations.KiePMMLDefineFunction;
+import org.kie.pmml.commons.transformations.KiePMMLDerivedField;
 
 /**
  * @see <a href=http://dmg.org/pmml/v4-4/Output.html#xsdElement_OutputField>OutputField</a>
  */
-public class KiePMMLOutputField extends AbstractKiePMMLBase {
+public class KiePMMLOutputField extends AbstractKiePMMLComponent {
 
+    private static final long serialVersionUID = 2408750585433339543L;
     private RESULT_FEATURE resultFeature = RESULT_FEATURE.PREDICTED_VALUE;
     private String targetField = null;
     private Integer rank;
     private Object value;
+    private KiePMMLExpression kiePMMLExpression;
 
     private KiePMMLOutputField(String name, List<KiePMMLExtension> extensions) {
         super(name, extensions);
@@ -57,6 +64,19 @@ public class KiePMMLOutputField extends AbstractKiePMMLBase {
         return rank;
     }
 
+    public KiePMMLExpression getKiePMMLExpression() {
+        return kiePMMLExpression;
+    }
+
+    public Object evaluate(final List<KiePMMLDefineFunction> defineFunctions,
+                           final List<KiePMMLDerivedField> derivedFields,
+                           final List<KiePMMLOutputField> outputFields,
+                           final List<KiePMMLNameValue> kiePMMLNameValues) {
+        return kiePMMLExpression != null ? kiePMMLExpression.evaluate(defineFunctions, derivedFields, outputFields, kiePMMLNameValues) : null;
+    }
+
+
+
     @Override
     public String toString() {
         return new StringJoiner(", ", KiePMMLOutputField.class.getSimpleName() + "[", "]")
@@ -65,6 +85,7 @@ public class KiePMMLOutputField extends AbstractKiePMMLBase {
                 .add("rank=" + rank)
                 .add("value=" + value)
                 .add("name='" + name + "'")
+                .add("kiePMMLExpression='" + kiePMMLExpression + "'")
                 .add("extensions=" + extensions)
                 .add("id='" + id + "'")
                 .add("parentId='" + parentId + "'")
@@ -93,19 +114,23 @@ public class KiePMMLOutputField extends AbstractKiePMMLBase {
         return Objects.hash(super.hashCode(), resultFeature, targetField, value);
     }
 
-    public static class Builder extends AbstractKiePMMLBase.Builder<KiePMMLOutputField> {
+    public static class Builder extends AbstractKiePMMLComponent.Builder<KiePMMLOutputField> {
 
         private Builder(String name, List<KiePMMLExtension> extensions) {
             super("OutputField-", () -> new KiePMMLOutputField(name, extensions));
         }
 
         public Builder withResultFeature(RESULT_FEATURE resultFeature) {
-            toBuild.resultFeature = resultFeature;
+            if (resultFeature != null) {
+                toBuild.resultFeature = resultFeature;
+            }
             return this;
         }
 
         public Builder withTargetField(String targetField) {
-            toBuild.targetField = targetField;
+            if (targetField != null) {
+                toBuild.targetField = targetField;
+            }
             return this;
         }
 
@@ -115,7 +140,16 @@ public class KiePMMLOutputField extends AbstractKiePMMLBase {
         }
 
         public Builder withRank(Integer rank) {
-            toBuild.rank = rank;
+            if (rank != null) {
+                toBuild.rank = rank;
+            }
+            return this;
+        }
+
+        public Builder withKiePMMLExpression(KiePMMLExpression kiePMMLExpression) {
+            if (kiePMMLExpression != null) {
+                toBuild.kiePMMLExpression = kiePMMLExpression;
+            }
             return this;
         }
     }

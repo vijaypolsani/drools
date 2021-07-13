@@ -64,7 +64,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static java.lang.Boolean.TRUE;
-import static org.drools.persistence.api.TransactionManager.STATUS_ACTIVE;
 
 public class PersistableRunner implements SingleSessionCommandService {
 
@@ -563,7 +562,12 @@ public class PersistableRunner implements SingleSessionCommandService {
         }
     }
 
+
+    private static ThreadLocal<String> txParent = new ThreadLocal<>();
+
     private class TransactionInterceptor extends AbstractInterceptor {
+
+
 
         public TransactionInterceptor() {
             setNext(new PseudoClockRunner());
@@ -583,16 +587,13 @@ public class PersistableRunner implements SingleSessionCommandService {
             PersistenceContext persistenceContext = jpm.getApplicationScopedPersistenceContext();
             // We flag the current persistence runner
             final String DROOLS_PARENT_RUNNER = "DROOLS_PARENT_RUNNER";
-            boolean isParentRunner = txm.getResource(DROOLS_PARENT_RUNNER) == null;
+            boolean isParentRunner = txParent.get() == null; //first time ?
+            if (isParentRunner) {
+                txParent.set(DROOLS_PARENT_RUNNER);
+            }
             boolean transactionOwner = false;
-
             try {
-                if (isParentRunner && txm.getStatus() == STATUS_ACTIVE) {
-                    txm.putResource(DROOLS_PARENT_RUNNER, TRUE);
-                }
                 transactionOwner = txm.begin();
-
-
                 persistenceContext.joinTransaction();
 
                 initExistingKnowledgeSession( sessionInfo.getId(),
@@ -619,6 +620,10 @@ public class PersistableRunner implements SingleSessionCommandService {
                     rollbackTransaction(t1, transactionOwner);
                 }
                 throw new RuntimeException("Wrapped exception see cause", t1);
+            } finally {
+                if(isParentRunner) {
+                    txParent.remove();
+                }
             }
 
             return context;

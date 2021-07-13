@@ -74,11 +74,12 @@ import org.kie.dmn.validation.dtanalysis.model.DDTATable;
 import org.kie.dmn.validation.dtanalysis.model.DTAnalysis;
 import org.kie.dmn.validation.dtanalysis.model.Hyperrectangle;
 import org.kie.dmn.validation.dtanalysis.model.Interval;
+import org.kie.dmn.validation.dtanalysis.model.NullBoundImpl;
 import org.kie.dmn.validation.dtanalysis.model.Overlap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class DMNDTAnalyser {
+public class DMNDTAnalyser implements InternalDMNDTAnalyser {
 
     private static final Logger LOG = LoggerFactory.getLogger(DMNDTAnalyser.class);
     private final org.kie.dmn.feel.FEEL FEEL;
@@ -91,6 +92,7 @@ public class DMNDTAnalyser {
         outputClauseVisitor = new DMNDTAnalyserOutputClauseVisitor((List) dmnProfiles);
     }
 
+    @Override
     public List<DTAnalysis> analyse(DMNModel model, Set<DMNValidator.Validation> flags) {
         if (!flags.contains(Validation.ANALYZE_DECISION_TABLE)) {
             throw new IllegalArgumentException();
@@ -405,10 +407,10 @@ public class DMNDTAnalyser {
             }
             // cycle rule's interval bounds
             List<Interval> activeIntervals = new ArrayList<>();
-            Bound<?> lastBound = null;
+            Bound<?> lastBound = NullBoundImpl.NULL;
             for (Bound<?> currentBound : bounds) {
                 LOG.debug("lastBound {} currentBound {}      activeIntervals {} == rules {}", lastBound, currentBound, activeIntervals, activeIntervalsToRules(activeIntervals));
-                if (activeIntervals.isEmpty() && lastBound != null && !Bound.adOrOver(lastBound, currentBound)) {
+                if (activeIntervals.isEmpty() && lastBound != NullBoundImpl.NULL && !Bound.adOrOver(lastBound, currentBound)) {
                     currentIntervals[jColIdx] = lastDimensionUncoveredInterval(lastBound, currentBound, domainRange);
                     Hyperrectangle gap = new Hyperrectangle(ddtaTable.inputCols(), buildEdgesForHyperrectangleFromIntervals(currentIntervals, jColIdx));
                     LOG.debug("GAP DETECTED {}", gap);

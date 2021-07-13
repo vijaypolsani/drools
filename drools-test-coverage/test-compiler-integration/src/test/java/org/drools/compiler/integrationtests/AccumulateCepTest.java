@@ -79,7 +79,7 @@ public class AccumulateCepTest {
 
     @Parameterized.Parameters(name = "KieBase type={0}")
     public static Collection<Object[]> getParameters() {
-        return TestParametersUtil.getKieBaseStreamConfigurations(false);
+        return TestParametersUtil.getKieBaseStreamConfigurations(true);
     }
 
     @Test
@@ -107,7 +107,7 @@ public class AccumulateCepTest {
         kbase.addPackages(TestUtil.createKnowledgeBuilder(null, drl).getKnowledgePackages());
 
         final KieSessionConfiguration ksConf = KnowledgeBaseFactory.newKnowledgeSessionConfiguration();
-        ksConf.setOption(ClockTypeOption.get("pseudo"));
+        ksConf.setOption(ClockTypeOption.PSEUDO);
         final KieSession ksession = kbase.newKieSession(ksConf, null);
         try {
             final ArrayList list = new ArrayList();

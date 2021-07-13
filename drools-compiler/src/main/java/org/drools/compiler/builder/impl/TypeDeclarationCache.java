@@ -16,13 +16,11 @@
 package org.drools.compiler.builder.impl;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -36,7 +34,6 @@ import org.drools.core.factmodel.traits.Thing;
 import org.drools.core.rule.Annotated;
 import org.drools.core.rule.TypeDeclaration;
 import org.drools.core.util.ClassUtils;
-import org.kie.api.definition.type.Modifies;
 import org.kie.api.definition.type.Position;
 import org.kie.api.io.Resource;
 import org.kie.api.runtime.rule.Match;
@@ -44,6 +41,7 @@ import org.kie.api.runtime.rule.Match;
 import static org.drools.compiler.builder.impl.ClassDefinitionFactory.createClassDefinition;
 import static org.drools.compiler.builder.impl.TypeDeclarationConfigurator.processMvelBasedAccessors;
 import static org.drools.core.util.BitMaskUtil.isSet;
+import static org.drools.core.util.Drools.hasMvel;
 
 public class TypeDeclarationCache {
 
@@ -52,7 +50,9 @@ public class TypeDeclarationCache {
 
     TypeDeclarationCache( KnowledgeBuilderImpl kbuilder ) {
         this.kbuilder = kbuilder;
-        initBuiltinTypeDeclarations();
+        if ( hasMvel() ) {
+            initBuiltinTypeDeclarations();
+        }
     }
 
     private void initBuiltinTypeDeclarations() {
@@ -152,7 +152,7 @@ public class TypeDeclarationCache {
         }
 
         if (typeDeclaration.isPropertyReactive()) {
-            processModifiedProps(cls, clsDef);
+            TypeDeclarationUtils.processModifiedProps(cls, clsDef);
         }
 
 
@@ -199,7 +199,7 @@ public class TypeDeclarationCache {
                                         ClassDefinition clsDef,
                                         TypeDeclaration typeDeclaration ) {
         // it's a new type declaration, so generate the @Position for it
-        Collection<Field> fields = new LinkedList<Field>();
+        Collection<Field> fields = new ArrayList<Field>();
         Class<?> tempKlass = cls;
         while (tempKlass != null && tempKlass != Object.class) {
             Collections.addAll( fields, tempKlass.getDeclaredFields() );
@@ -233,22 +233,6 @@ public class TypeDeclarationCache {
             if (fld != null) {
                 // it's null if there is no @Position
                 clsDef.addField(fld);
-            }
-        }
-    }
-
-    private void processModifiedProps(Class<?> cls,
-                                      ClassDefinition clsDef) {
-        for (Method method : cls.getDeclaredMethods()) {
-            Modifies modifies = method.getAnnotation(Modifies.class);
-            if (modifies != null) {
-                String[] props = modifies.value();
-                List<String> properties = new ArrayList<String>(props.length);
-                for (String prop : props) {
-                    properties.add(prop.trim());
-                }
-                clsDef.addModifiedPropsByMethod(method,
-                                                properties);
             }
         }
     }

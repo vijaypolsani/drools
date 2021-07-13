@@ -33,10 +33,11 @@ import org.drools.core.factmodel.FieldDefinition;
 import org.drools.core.factmodel.traits.Thing;
 import org.drools.core.factmodel.traits.TraitType;
 import org.drools.core.factmodel.traits.TraitableBean;
-import org.drools.traits.core.factmodel.TraitBuilderUtil.MixinInfo;
 import org.drools.core.util.Triple;
 import org.drools.core.util.TripleFactory;
 import org.drools.core.util.TripleStore;
+import org.drools.mvel.asm.AsmUtil;
+import org.drools.traits.core.factmodel.TraitBuilderUtil.MixinInfo;
 import org.kie.api.definition.type.FactField;
 import org.mvel2.asm.ClassVisitor;
 import org.mvel2.asm.ClassWriter;
@@ -45,10 +46,10 @@ import org.mvel2.asm.Label;
 import org.mvel2.asm.MethodVisitor;
 import org.mvel2.asm.Type;
 
+import static org.drools.mvel.asm.ClassGenerator.createClassWriter;
 import static org.drools.traits.core.factmodel.TraitBuilderUtil.buildMixinMethods;
 import static org.drools.traits.core.factmodel.TraitBuilderUtil.findMixinInfo;
 import static org.drools.traits.core.factmodel.TraitBuilderUtil.getMixinName;
-import static org.drools.core.rule.builder.dialect.asm.ClassGenerator.createClassWriter;
 
 public class TraitTripleProxyClassBuilderImpl extends AbstractProxyClassBuilderImpl implements TraitProxyClassBuilder, Serializable {
 
@@ -71,11 +72,11 @@ public class TraitTripleProxyClassBuilderImpl extends AbstractProxyClassBuilderI
         BitSet mask = traitRegistryImpl.getFieldMask(getTrait().getName(), core.getDefinedClass().getName() );
 
         String name = TraitFactoryImpl.getPropertyWrapperName(getTrait(), core );
-        String masterName = TraitFactoryImpl.getProxyName(getTrait(), core );
+        String proxyName = TraitFactoryImpl.getProxyName(getTrait(), core );
         Class<?> traitClass = getTrait().getDefinedClass();
 
         String internalWrapper  = BuildUtils.getInternalType(name);
-        String internalProxy    = BuildUtils.getInternalType(masterName);
+        String internalProxy    = BuildUtils.getInternalType(proxyName);
 
         String internalCore     = Type.getInternalName(core.getDefinedClass());
         String descrCore        = Type.getDescriptor(core.getDefinedClass());
@@ -225,7 +226,7 @@ public class TraitTripleProxyClassBuilderImpl extends AbstractProxyClassBuilderI
 
         helpBuildClass( core, cw, internalProxy, descrCore, mask );
 
-        buildProxyAccessors( mask, cw, masterName, core, mixinInfo );
+        buildProxyAccessors( mask, cw, proxyName, core, mixinInfo );
 
         boolean hasKeys = false;
         for ( FactField ff : getTrait().getFields() ) {
@@ -235,14 +236,14 @@ public class TraitTripleProxyClassBuilderImpl extends AbstractProxyClassBuilderI
             }
         }
         if ( ! hasKeys ) {
-            buildEqualityMethods( cw, masterName, core.getClassName() );
+            buildEqualityMethods( cw, proxyName, core.getClassName() );
         } else {
-            buildKeyedEqualityMethods( cw, getTrait(), masterName );
+            buildKeyedEqualityMethods( cw, getTrait(), proxyName );
         }
 
-        buildMixinMethods( masterName, mixinInfo, cw );
+        buildMixinMethods( proxyName, mixinInfo, cw );
 
-        buildCommonMethods( cw, masterName );
+        buildCommonMethods( cw, proxyName );
 
         buildExtendedMethods( cw, getTrait(), core );
 
@@ -386,44 +387,44 @@ public class TraitTripleProxyClassBuilderImpl extends AbstractProxyClassBuilderI
     }
 
 
-    protected void buildProxyAccessors( BitSet mask, ClassWriter cw, String masterName, ClassDefinition core, MixinInfo mixinInfo) {
+    protected void buildProxyAccessors( BitSet mask, ClassWriter cw, String proxyName, ClassDefinition core, MixinInfo mixinInfo) {
         int j = 0;
 
         for ( FieldDefinition field : getTrait().getFieldsDefinitions() ) {
             boolean isSoftField = TraitRegistryImpl.isSoftField(field, j++, mask );
-            buildProxyAccessor( cw, masterName, core, mixinInfo, field, isSoftField );
+            buildProxyAccessor( cw, proxyName, core, mixinInfo, field, isSoftField );
         }
 
     }
 
 
-    protected void buildProxyAccessor( ClassWriter cw, String masterName, ClassDefinition core, MixinInfo mixinInfo, FieldDefinition field, boolean isSoftField ) {
+    protected void buildProxyAccessor( ClassWriter cw, String proxyName, ClassDefinition core, MixinInfo mixinInfo, FieldDefinition field, boolean isSoftField ) {
         if ( core.isFullTraiting() ) {
-            buildLogicalGetter( cw, field, masterName, core );
+            buildLogicalGetter( cw, field, proxyName, core );
             if ( ! isSoftField ) {
-                buildHardSetter( cw, field, masterName, trait, core );
+                buildHardSetter( cw, field, proxyName, trait, core );
             } else {
-                buildSoftSetter( cw, field, masterName, core );
+                buildSoftSetter( cw, field, proxyName, core );
             }
         } else {
             if ( isSoftField ) {
                 if (mixinInfo == null || !mixinInfo.isMixinGetter( field )) {
-                    buildSoftGetter( cw, field, masterName );
-                    buildSoftSetter( cw, field, masterName, core );
+                    buildSoftGetter( cw, field, proxyName );
+                    buildSoftSetter( cw, field, proxyName, core );
                 }
             } else {
-                buildHardGetter( cw, field, masterName, trait, core );
-                buildHardSetter( cw, field, masterName, trait, core );
+                buildHardGetter( cw, field, proxyName, trait, core );
+                buildHardSetter( cw, field, proxyName, trait, core );
             }
         }
     }
 
 
-	protected void buildHardGetter( ClassVisitor cw, FieldDefinition field, String masterName, ClassDefinition proxy, ClassDefinition core ) {
-        buildHardGetter( cw, field, masterName, proxy, core, BuildUtils.getterName( field.getName(), field.getTypeName() ), ACC_PUBLIC );
+	protected void buildHardGetter( ClassVisitor cw, FieldDefinition field, String proxyName, ClassDefinition proxy, ClassDefinition core ) {
+        buildHardGetter( cw, field, proxyName, proxy, core, BuildUtils.getterName( field.getName(), field.getTypeName() ), ACC_PUBLIC );
     }
 
-	protected void buildHardGetter( ClassVisitor cw, FieldDefinition field, String masterName, ClassDefinition proxy, ClassDefinition core, String getterName, int accessMode ) {
+	protected void buildHardGetter( ClassVisitor cw, FieldDefinition field, String proxyName, ClassDefinition proxy, ClassDefinition core, String getterName, int accessMode ) {
 		Class fieldType = field.getType();
 
 		MethodVisitor mv = cw.visitMethod( accessMode,
@@ -433,13 +434,13 @@ public class TraitTripleProxyClassBuilderImpl extends AbstractProxyClassBuilderI
 		                                   null);
 		mv.visitCode();
 
-		TraitFactoryImpl.invokeExtractor(mv, masterName, core, field );
+		TraitFactoryImpl.invokeExtractor(mv, proxyName, core, field );
 
 		if ( ! BuildUtils.isPrimitive( field.getTypeName() ) ) {
 			mv.visitTypeInsn( CHECKCAST, Type.getInternalName( fieldType ) );
 		}
 
-		mv.visitInsn( BuildUtils.returnType ( fieldType.getName() ) );
+		mv.visitInsn( AsmUtil.returnType ( fieldType.getName() ) );
 		mv.visitMaxs( 0, 0 );
 		mv.visitEnd();
 
@@ -447,12 +448,12 @@ public class TraitTripleProxyClassBuilderImpl extends AbstractProxyClassBuilderI
 
 
 
-	protected void buildHardSetter( ClassVisitor cw, FieldDefinition field, String masterName, ClassDefinition trait, ClassDefinition core ) {
-        buildHardSetter(cw, field, masterName, trait, core, BuildUtils.setterName( field.getName()), ACC_PUBLIC );
+	protected void buildHardSetter( ClassVisitor cw, FieldDefinition field, String proxyName, ClassDefinition trait, ClassDefinition core ) {
+        buildHardSetter(cw, field, proxyName, trait, core, BuildUtils.setterName( field.getName()), ACC_PUBLIC );
     }
 
-	private void buildSoftSetter( ClassWriter cw, FieldDefinition field, String masterName, ClassDefinition core ) {
-		buildSoftSetter(cw, field, masterName, core, BuildUtils.setterName( field.getName()), ACC_PUBLIC );
+	private void buildSoftSetter( ClassWriter cw, FieldDefinition field, String proxyName, ClassDefinition core ) {
+		buildSoftSetter(cw, field, proxyName, core, BuildUtils.setterName( field.getName()), ACC_PUBLIC );
 	}
 
 	protected void buildSoftSetter( ClassVisitor cw, FieldDefinition field, String proxy, ClassDefinition core, String setterName, int accessMode ) {
@@ -473,7 +474,7 @@ public class TraitTripleProxyClassBuilderImpl extends AbstractProxyClassBuilderI
         mv.visitFieldInsn( GETFIELD, BuildUtils.getInternalType( proxy ), "store", Type.getDescriptor( TripleStore.class ) );
         mv.visitVarInsn( ALOAD, 0 );
         mv.visitLdcInsn( field.resolveAlias() );
-        mv.visitVarInsn( BuildUtils.varType( type ), 1 );
+        mv.visitVarInsn( AsmUtil.varType( type ), 1 );
         if ( BuildUtils.isPrimitive( type ) ) {
             TraitFactoryImpl.valueOf(mv, type );
         }
@@ -488,8 +489,8 @@ public class TraitTripleProxyClassBuilderImpl extends AbstractProxyClassBuilderI
 
     }
 
-	private void buildSoftGetter( ClassWriter cw, FieldDefinition field, String masterName ) {
-		buildSoftGetter( cw, field, masterName, BuildUtils.getterName( field.getName(), field.getTypeName() ), ACC_PUBLIC );
+	private void buildSoftGetter( ClassWriter cw, FieldDefinition field, String proxyName ) {
+		buildSoftGetter( cw, field, proxyName, BuildUtils.getterName( field.getName(), field.getTypeName() ), ACC_PUBLIC );
     }
 
 	protected void buildSoftGetter( ClassVisitor cw, FieldDefinition field, String proxy, String getterName, int accessMode ) {
@@ -529,13 +530,13 @@ public class TraitTripleProxyClassBuilderImpl extends AbstractProxyClassBuilderI
 
         if ( BuildUtils.isPrimitive( type ) ) {
             TraitFactoryImpl.primitiveValue(mv, type );
-            mv.visitInsn( BuildUtils.returnType( type ) );
+            mv.visitInsn( AsmUtil.returnType( type ) );
             mv.visitLabel( l1 );
-            mv.visitInsn( BuildUtils.zero( type ) );
-            mv.visitInsn( BuildUtils.returnType( type ) );
+            mv.visitInsn( AsmUtil.zero( type ) );
+            mv.visitInsn( AsmUtil.returnType( type ) );
             mv.visitLabel( l0 );
-            mv.visitInsn( BuildUtils.zero( type ) );
-            mv.visitInsn( BuildUtils.returnType( type ) );
+            mv.visitInsn( AsmUtil.zero( type ) );
+            mv.visitInsn( AsmUtil.returnType( type ) );
         } else {
             mv.visitInsn( ARETURN );
             mv.visitLabel( l1 );

@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -41,13 +42,18 @@ import org.drools.modelcompiler.domain.Result;
 import org.drools.modelcompiler.domain.StockTick;
 import org.drools.modelcompiler.domain.Toy;
 import org.drools.modelcompiler.domain.Woman;
+import org.junit.Assert;
 import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.kie.api.definition.type.FactType;
 import org.kie.api.runtime.KieSession;
 import org.kie.api.runtime.process.ProcessContext;
 import org.kie.api.runtime.rule.FactHandle;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.CoreMatchers.equalTo;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -170,7 +176,7 @@ public class CompilerTest extends BaseModelTest {
 
         Collection<Result> results = getObjectsIntoList( ksession, Result.class );
         assertEquals( 3, results.size() );
-        Assertions.assertThat(results.stream().map(r -> r.getValue())).containsExactlyInAnyOrder(mario, luca, edoardo);
+        assertThat(results.stream().map(r -> r.getValue())).containsExactlyInAnyOrder(mario, luca, edoardo);
     }
 
     @Test
@@ -198,7 +204,7 @@ public class CompilerTest extends BaseModelTest {
 
         Collection<Result> results = getObjectsIntoList( ksession, Result.class );
         assertEquals( 1, results.size() );
-        Assertions.assertThat(results.stream().map(Result::getValue)).containsExactlyInAnyOrder(leonardo);
+        assertThat(results.stream().map(Result::getValue)).containsExactlyInAnyOrder(leonardo);
     }
 
     @Test
@@ -607,7 +613,7 @@ public class CompilerTest extends BaseModelTest {
         ksession.insert( bob );
         ksession.fireAllRules();
 
-        Assertions.assertThat(list).containsExactlyInAnyOrder("car", "ball");
+        assertThat(list).containsExactlyInAnyOrder("car", "ball");
     }
 
     @Test
@@ -1090,7 +1096,7 @@ public class CompilerTest extends BaseModelTest {
                 .stream().map(Result::getValue).collect(Collectors.toList());
         assertEquals(2, results.size());
 
-        Assertions.assertThat(results).containsExactlyInAnyOrder("Luca", null);
+        assertThat(results).containsExactlyInAnyOrder("Luca", null);
     }
 
     @Test
@@ -1118,7 +1124,7 @@ public class CompilerTest extends BaseModelTest {
                 .stream().map(Result::getValue).collect(Collectors.toList());
         assertEquals(1, results.size());
 
-        Assertions.assertThat(results).containsExactlyInAnyOrder("Second");
+        assertThat(results).containsExactlyInAnyOrder("Second");
     }
 
     @Test
@@ -1170,6 +1176,32 @@ public class CompilerTest extends BaseModelTest {
         p1.setMoney( new BigDecimal(1 ) );
         ksession1.insert( p1 );
         assertEquals( 1, ksession1.fireAllRules() );
+
+    }
+
+    @Test
+    public void testBigDecimalOperationsInConstraint() {
+        String str = "import " + Person.class.getCanonicalName() + ";\n" +
+                "import " + BigDecimal.class.getCanonicalName() + ";\n" +
+                "global java.util.List results;\n" +
+                "rule \"rule1\"\n" +
+                "when\n" +
+                "    Person( $moneyDoubled : (money + money) )\n" +
+                "then\n" +
+                "    results.add($moneyDoubled);\n" +
+                "end\n";
+
+        KieSession ksession1 = getKieSession(str);
+
+        ArrayList<BigDecimal> results = new ArrayList<>();
+        ksession1.setGlobal("results", results);
+
+        Person p1 = new Person();
+        p1.setMoney( new BigDecimal(1 ));
+        ksession1.insert( p1 );
+        assertEquals( 1, ksession1.fireAllRules() );
+
+        assertThat(results).containsExactly(BigDecimal.valueOf(2));
 
     }
 
@@ -1247,6 +1279,97 @@ public class CompilerTest extends BaseModelTest {
 
         ksession.insert( map );
         assertEquals( 1, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testMapAccessBindingConstant() {
+        final String drl1 =
+                "import java.util.Map;\n" +
+                "rule R1 when\n" +
+                "	 Map($type: \"type\", this[$type] == 'Goods' )\n" +
+                "then\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( drl1 );
+
+        final Map<String, Object> map = new HashMap<>();
+        map.put("type", "Goods");
+
+        ksession.insert( map );
+        assertEquals( 1, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testMapAccessBindingConstantJoin() {
+        final String drl1 =
+                "import java.util.Map;\n" +
+                "import " + Person.class.getCanonicalName() + ";\n" +
+                "import " + List.class.getCanonicalName() + ";\n" +
+                "global java.util.List results;\n" +
+                "rule R1 when\n" +
+                "$p : Person($name: \"Andrea\", " +
+                        "parentP.childrenMap[$name] != null," +
+                        "parentP.childrenMap[$name].name != null )\n" +
+                "then\n" +
+                "  results.add($p.getName());\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( drl1 );
+
+        ArrayList<String> results = new ArrayList<>();
+        ksession.setGlobal("results", results);
+
+        Person luca = new Person("Luca", 37);
+        luca.setParentP(luca); // avoid NPE
+        Person andrea = new Person("Andrea", 0);
+        andrea.setParentP(luca);
+
+        luca.getChildrenMap().put("Andrea", andrea);
+
+        ksession.insert( luca );
+        ksession.insert( andrea );
+        assertEquals( 2, ksession.fireAllRules() );
+
+        assertThat(results).containsExactlyInAnyOrder("Andrea", "Luca");
+    }
+
+    @Test
+    public void testMapAccessBinding() {
+        final String drl1 =
+                "import java.util.Map;\n" +
+                        "rule R1 when\n" +
+                        "    $s: String() \n" +
+                        "	 Map(this[$s] == 'Goods' )\n" +
+                        "then\n" +
+                        "end\n";
+
+        KieSession ksession = getKieSession( drl1 );
+
+        final Map<String, Object> map = new HashMap<>();
+        map.put("type", "Goods");
+
+        ksession.insert( map );
+        ksession.insert("type");
+        assertEquals( 1, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testStringBinding() {
+        final String drl1 =
+                "import " + Result.class.getCanonicalName() + ";\n" +
+                "rule R1 when\n" +
+                "	 String($t: \"type\")\n" +
+                "then\n" +
+                "  insert(new Result($t));\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( drl1 );
+
+        ksession.insert( "whatever" );
+        assertEquals( 1, ksession.fireAllRules() );
+
+        Collection<Result> results = getObjectsIntoList(ksession, Result.class);
+        assertEquals(results.iterator().next().getValue().toString(), "type");
     }
 
     @Test
@@ -1711,7 +1834,6 @@ public class CompilerTest extends BaseModelTest {
 
         ksession.fireAllRules();
         assertEquals("Milan number has the same value of Mark age", result.getValue());
-
     }
 
     @Test
@@ -1859,6 +1981,111 @@ public class CompilerTest extends BaseModelTest {
     }
 
     @Test
+    public void testHalfBinaryWithParenthesis() {
+        // DROOLS-6006
+        final String drl1 =
+                "rule R1 when\n" +
+                "    Integer(intValue (> 2 && < 5))\n" +
+                "then\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( drl1 );
+
+        ksession.insert( 3 );
+        ksession.insert( 4 );
+        ksession.insert( 6 );
+        assertEquals( 2, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testHalfBinaryOrWithParenthesis() {
+        // DROOLS-6006
+        final String drl1 =
+                "rule R1 when\n" +
+                "    Integer(intValue (< 2 || > 5))\n" +
+                "then\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( drl1 );
+
+        ksession.insert( 3 );
+        ksession.insert( 4 );
+        ksession.insert( 6 );
+        assertEquals( 1, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testComplexHalfBinary() {
+        // DROOLS-6006
+        final String drl1 =
+                "rule R1 when\n" +
+                "    Integer(intValue ((> 2 && < 4) || (> 5 && < 7)) )\n" +
+                "then\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( drl1 );
+
+        ksession.insert( 3 );
+        ksession.insert( 4 );
+        ksession.insert( 6 );
+        assertEquals( 2, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testHalfBinaryOnComparable() {
+        // DROOLS-6421
+        final String drl1 =
+                "rule R1 when\n" +
+                "    String(this (> \"C\" && < \"K\"))\n" +
+                "then\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( drl1 );
+
+        ksession.insert( "B" );
+        ksession.insert( "D" );
+        ksession.insert( "H" );
+        ksession.insert( "S" );
+        assertEquals( 2, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testHalfBinaryOrOnComparable() {
+        // DROOLS-6421
+        final String drl1 =
+                "rule R1 when\n" +
+                "    String(this (< \"C\" || > \"K\"))\n" +
+                "then\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( drl1 );
+
+        ksession.insert( "B" );
+        ksession.insert( "D" );
+        ksession.insert( "H" );
+        ksession.insert( "S" );
+        assertEquals( 2, ksession.fireAllRules() );
+    }
+
+    @Test
+    public void testComplexHalfBinaryOnComparable() {
+        // DROOLS-6421
+        final String drl1 =
+                "rule R1 when\n" +
+                "    String(this ((> \"C\" && < \"K\") || (> \"P\" && < \"R\")))\n" +
+                "then\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( drl1 );
+
+        ksession.insert( "B" );
+        ksession.insert( "D" );
+        ksession.insert( "Q" );
+        ksession.insert( "S" );
+        assertEquals( 2, ksession.fireAllRules() );
+    }
+
+    @Test
     public void testMapPrimitiveComparison() {
         final String drl1 =
                 "import java.util.Map;\n" +
@@ -1944,7 +2171,7 @@ public class CompilerTest extends BaseModelTest {
         Person first = new Person("First", 40);
         first.setEmployed(true);
         ksession.insert(first);
-        Assertions.assertThat(ksession.fireAllRules()).isEqualTo(1);;
+        assertThat(ksession.fireAllRules()).isEqualTo(1);;
     }
 
     @Test
@@ -1980,7 +2207,7 @@ public class CompilerTest extends BaseModelTest {
         Person first = new Person("John", 40);
         first.setEmployed(true);
         ksession.insert(first);
-        Assertions.assertThat(ksession.fireAllRules()).isEqualTo(1);;
+        assertThat(ksession.fireAllRules()).isEqualTo(1);;
     }
 
     @Test
@@ -2000,7 +2227,7 @@ public class CompilerTest extends BaseModelTest {
         StockTick st = new StockTick("RHT");
         st.setTimeField(new Date().getTime());
         ksession.insert(st);
-        Assertions.assertThat(ksession.fireAllRules()).isEqualTo(1);;
+        assertThat(ksession.fireAllRules()).isEqualTo(1);;
     }
 
     @Test()
@@ -2061,7 +2288,101 @@ public class CompilerTest extends BaseModelTest {
         assertEquals( 5, pet.getAge() );
     }
 
-    @Test
+    public static class IntegerToShort {
+
+        private Boolean testBoolean;
+        private int testInt;
+        private Short testShort;
+        private double testDouble;
+
+        public IntegerToShort(Boolean testBoolean, int testInt, Short testShort, Double testDouble) {
+            this.testBoolean = testBoolean;
+            this.testInt = testInt;
+            this.testShort = testShort;
+            this.testDouble = testDouble;
+        }
+
+        public IntegerToShort(Boolean testBoolean, int testInt, Short testShort) {
+            this.testBoolean = testBoolean;
+            this.testInt = testInt;
+            this.testShort = testShort;
+            this.testDouble = 0d;
+        }
+
+        public void setTestBoolean(Boolean testBoolean) {
+            this.testBoolean = testBoolean;
+        }
+
+        public void setTestInt(int testInt) {
+            this.testInt = testInt;
+        }
+
+        public void setTestShort(Short testShort) {
+            this.testShort = testShort;
+        }
+
+        public Boolean getTestBoolean() {
+            return testBoolean;
+        }
+
+        public int getTestInt() {
+            return testInt;
+        }
+
+        public Short getTestShort() {
+            return testShort;
+        }
+
+        public Double getTestDouble() {
+            return testDouble;
+        }
+
+        public void setTestDouble(Double testShort) {
+            this.testDouble = testDouble;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (o == null || getClass() != o.getClass()) {
+                return false;
+            }
+            IntegerToShort that = (IntegerToShort) o;
+            return testInt == that.testInt && Objects.equals(testBoolean, that.testBoolean) && Objects.equals(testShort, that.testShort) && Objects.equals(testDouble, that.testDouble);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(testBoolean, testInt, testShort, testDouble);
+        }
+
+        @Override
+        public String toString() {
+            return "IntegerToShort{" +
+                    "testBoolean=" + testBoolean +
+                    ", testInt=" + testInt +
+                    ", testShort=" + testShort +
+                    ", testDouble=" + testDouble +
+                    '}';
+        }
+    }
+
+    public static class GlobalFunctions {
+        public Object getObject() {
+            return new IntegerToShort(true, 1, (short)0);
+        }
+
+        public String getValue(Object o) {
+            if(o instanceof IntegerToShort) {
+                return "" + ((IntegerToShort)o).getTestInt();
+            }
+            return "0";
+        }
+    }
+
+    @Test // DROOLS-5007
     public void testIntToShortCast() {
         String str = "import " + Address.class.getCanonicalName() + ";\n" +
                 "rule \"rule1\"\n" +
@@ -2081,6 +2402,124 @@ public class CompilerTest extends BaseModelTest {
         assertEquals( 1, ksession.fireAllRules() );
     }
 
+
+    @Test // DROOLS-5709 // DROOLS-5768
+    public void testCastingIntegerToShort() {
+        String str =
+                "import " + IntegerToShort.class.getCanonicalName() + ";\n " +
+                        "rule \"test_rule\"\n" +
+                        "dialect \"java\"\n" +
+                        "when\n" +
+                        "   $integerToShort : IntegerToShort( " +
+                        "           $testInt : testInt, " +
+                        "           testBoolean != null, " +
+                        "           testBoolean == false" +
+                        ") \n" +
+                        "then\n" +
+                        "   $integerToShort.setTestShort((short)(12)); \n" +
+                        "   $integerToShort.setTestShort((short)($testInt)); \n" +
+                        "   $integerToShort.setTestBoolean(true);\n" +
+                        "   update($integerToShort);\n" +
+                        "end";
+
+        KieSession ksession = getKieSession(str);
+        IntegerToShort integerToShort = new IntegerToShort(false, Short.MAX_VALUE, (short)0, (double)0);
+
+        ksession.insert(integerToShort);
+        int rulesFired = ksession.fireAllRules();
+
+        Assert.assertEquals(1, rulesFired);
+        assertThat(integerToShort).isEqualTo(new IntegerToShort(true, Short.MAX_VALUE, Short.MAX_VALUE, (double)0));
+    }
+
+    @Test // DROOLS-5998
+    public void testCastingIntegerToShortWithNegativeNumbers() {
+        String str =
+                "import " + IntegerToShort.class.getCanonicalName() + ";\n " +
+                        "rule \"test_rule\"\n" +
+                        "dialect \"java\"\n" +
+                        "when\n" +
+                        "   $integerToShort : IntegerToShort( " +
+                        "           $testInt : testInt, " +
+                        "           testBoolean != null, " +
+                        "           testBoolean == false" +
+                        ") \n" +
+                        "then\n" +
+                        "   $integerToShort.setTestShort((short)(-12)); \n" +
+                        "   $integerToShort.setTestBoolean(true);\n" +
+                        "   update($integerToShort);\n" +
+                        "end";
+
+        KieSession ksession = getKieSession(str);
+        IntegerToShort integerToShort = new IntegerToShort(false, Short.MAX_VALUE, (short)0, (double)0);
+
+        ksession.insert(integerToShort);
+        int rulesFired = ksession.fireAllRules();
+
+        Assert.assertEquals(1, rulesFired);
+        assertThat(integerToShort).isEqualTo(new IntegerToShort(true, Short.MAX_VALUE, (short)-12, (double)0));
+    }
+
+    @Test // RHDM-1644 // DROOLS-6196
+    public void testCastingIntegerToShortWithDoubleVar() {
+        String str =
+                "import " + IntegerToShort.class.getCanonicalName() + ";\n " +
+                        "rule \"test_rule\"\n" +
+                        "dialect \"java\"\n" +
+                        "when\n" +
+                        "   $integerToShort : IntegerToShort( " +
+                        "           $testDouble : testDouble, " +
+                        "           $testInt : testInt, " +
+                        "           testBoolean != null, " +
+                        "           testBoolean == false" +
+                        ") \n" +
+                        "then\n" +
+                        "   $integerToShort.setTestShort((short)((16 + $testDouble))); \n" +
+                        "   $integerToShort.setTestBoolean(true);\n" +
+                        "   update($integerToShort);\n" +
+                        "end";
+
+        KieSession ksession = getKieSession(str);
+        IntegerToShort integerToShort = new IntegerToShort(false, Short.MAX_VALUE, (short)0, (double)1);
+
+        ksession.insert(integerToShort);
+        int rulesFired = ksession.fireAllRules();
+
+        Assert.assertEquals(1, rulesFired);
+        assertThat(integerToShort).isEqualTo(new IntegerToShort(true, Short.MAX_VALUE, (short)17, (double)1));
+    }
+
+    @Test // RHDM-1644 // DROOLS-6196
+    public void testUseOfVarCreatedAsInputArgInGlobalFuntionAsA_Var() {
+        String str =
+                "import " + IntegerToShort.class.getCanonicalName() + ";\n " +
+                "global " + GlobalFunctions.class.getCanonicalName() + " functions;\n " +
+                        "rule \"test_rule\"\n" +
+                        "dialect \"java\"\n" +
+                        "when\n" +
+                        "   $integerToShort : IntegerToShort( " +
+                        "           $testInt : testInt, " +
+                        "           testBoolean != null, " +
+                        "           testBoolean == false" +
+                        ") \n" +
+                        "then\n" +
+                        "   Object co = functions.getObject(); \n" +
+                        "   $integerToShort.setTestInt((int)Integer.valueOf(functions.getValue(co)));\n" +
+                        "   $integerToShort.setTestBoolean(true);\n" +
+                        "   update($integerToShort);\n" +
+                        "end";
+
+        KieSession ksession = getKieSession(str);
+        IntegerToShort integerToShort = new IntegerToShort(false, Short.MAX_VALUE, (short)0);
+
+        ksession.insert(integerToShort);
+        ksession.setGlobal("functions", new GlobalFunctions());
+        int rulesFired = ksession.fireAllRules();
+
+        Assert.assertEquals(1, rulesFired);
+        assertThat(integerToShort).isEqualTo(new IntegerToShort(true, 1, (short)0));
+    }
+
     @Test
     public void testConsequenceGetContext() throws Exception {
         String str =
@@ -2093,6 +2532,95 @@ public class CompilerTest extends BaseModelTest {
 
         KieSession ksession = getKieSession( str );
         assertNotNull( ksession);
+    }
+
+    @Test // DROOLS-6034
+    public void testConsequenceInsertThenUpdate() throws Exception {
+        String str =
+                "global java.util.List children;\n" +
+                        "import " + Person.class.getCanonicalName() + ";" +
+                        "rule \"a new baby is born\" when\n" +
+                        "  " + // No pattern
+                        "then\n" +
+                        "  Person andrea = new Person();\n" +
+                        "  insert(andrea);\n" +
+                        "  andrea.setName(\"Andrea\");\n" +
+                        "  update(andrea);\n" +
+                        "  children.add(andrea.getName());\n" +
+                        "end";
+
+        KieSession kSession = getKieSession( str );
+
+        ArrayList<String> children = new ArrayList<>();
+        kSession.setGlobal("children", children);
+
+        Person luca = new Person( "Luca", 36 );
+
+        kSession.insert( luca );
+        assertEquals(1, kSession.fireAllRules());
+
+        Assertions.assertThat(children).containsOnly("Andrea");
+    }
+
+    @Test // DROOLS-6034
+    public void testConsequenceInsertThenModify() throws Exception {
+        String str =
+                "global java.util.List children;\n" +
+                        "import " + Person.class.getCanonicalName() + ";" +
+                        "dialect \"mvel\"" +
+                        "rule \"a new baby is born\" when\n" +
+                        "  " + // No pattern
+                        "then\n" +
+                        "  Person andrea = new Person();\n" +
+                        "  insert(andrea);\n" +
+                        "  modify(andrea) {" +
+                        "       name = \"Andrea\" " +
+                        "  }" +
+                        "  children.add(andrea.getName());\n" +
+                        "end";
+
+        KieSession kSession = getKieSession( str );
+
+        ArrayList<String> children = new ArrayList<>();
+        kSession.setGlobal("children", children);
+
+        Person luca = new Person( "Luca", 36 );
+
+        kSession.insert( luca );
+        assertEquals(1, kSession.fireAllRules());
+
+        Assertions.assertThat(children).containsOnly("Andrea");
+    }
+
+    @Test // DROOLS-6034
+    public void testConsequenceInsertThenUpdateWithPatternInitializer() throws Exception {
+        String str =
+                "global java.util.List result;\n" +
+                "import " + Person.class.getCanonicalName() + ";" +
+                "import static " + Person.class.getName() + ".identityFunction;\n" +
+                "no-loop true\n" +
+                "rule R1 when\n" +
+                "  $p : Person($name : name)\n" +
+                "then\n" +
+                "  Person fromMethodCall = identityFunction($p);" +
+                "  Person fromNameExpr = fromMethodCall;" +
+                "  Person fromNameExprTwice = fromNameExpr;\n" +
+                "  insert(fromNameExprTwice);\n" +
+                "  update(fromNameExprTwice);\n" +
+                "  result.add(fromNameExprTwice.getName());\n" +
+                "end";
+
+        KieSession kSession = getKieSession( str );
+
+        ArrayList<String> children = new ArrayList<>();
+        kSession.setGlobal("result", children);
+
+        Person luca = new Person( "Luca", 36 );
+
+        kSession.insert( luca );
+        assertEquals(1, kSession.fireAllRules());
+
+        Assertions.assertThat(children).containsOnly("Luca");
     }
 
     @Test
@@ -2136,7 +2664,7 @@ public class CompilerTest extends BaseModelTest {
         ksession.insert(p2);
 
         assertEquals(1, ksession.fireAllRules());
-        Assertions.assertThat(list).containsExactly("John");
+        assertThat(list).containsExactly("John");
     }
 
     @Test
@@ -2189,7 +2717,7 @@ public class CompilerTest extends BaseModelTest {
         ksession.insert(p3);
 
         assertEquals(2, ksession.fireAllRules());
-        Assertions.assertThat(list).containsExactlyInAnyOrder("John", "George");
+        assertThat(list).containsExactlyInAnyOrder("John", "George");
     }
 
     @Test
@@ -2293,6 +2821,189 @@ public class CompilerTest extends BaseModelTest {
         ksession.insert( p2 );
         ksession.fireAllRules();
 
-        Assertions.assertThat(list).containsExactlyInAnyOrder(40, 38, 41, 38, 41, 43);
+        assertThat(list).containsExactlyInAnyOrder(40, 38, 41, 38, 41, 43);
+    }
+
+    @Test()
+    public void testStringRelationalComparison() {
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                "global java.util.List list;\n" +
+                "rule R when\n" +
+                "  $p : Person(name > \"Bob\" && name < \"Ken\")\n" +
+                "then\n" +
+                "  list.add($p.getName());" +
+                "end";
+
+        KieSession ksession = getKieSession(str);
+        final List<String> list = new ArrayList<>();
+        ksession.setGlobal("list", list);
+
+        ksession.insert(new Person("John"));
+        ksession.insert(new Person("Ann"));
+        ksession.fireAllRules();
+
+        assertThat(list).containsExactly("John");
+    }
+
+    @Rule
+    public ExpectedException exceptionRule = ExpectedException.none();
+
+    @Test
+    public void testNPEOnConstraint() {
+        exceptionRule.expect(RuntimeException.class);
+        exceptionRule.expectMessage(equalTo("Error evaluating constraint 'money < salary * 20' in [Rule \"R\" in r0.drl]"));
+
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                        "rule R when\n" +
+                        "  $p : Person(money < salary * 20 )\n" +
+                        "then\n" +
+                        "end";
+
+        KieSession ksession = getKieSession( str );
+
+        Person me = new Person( "Luca");
+        me.setMoney(null);
+        ksession.insert( me );
+        ksession.fireAllRules();
+    }
+
+    @Test
+    public void testWithQuotedStringConcatenationOnConstraint() {
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                        "rule R when\n" +
+                        "  $p : Person(name == \"Luca\" + \" II\"  )\n" +
+                        "then\n" +
+                        "end";
+
+        KieSession ksession = getKieSession( str );
+
+        Person me = new Person( "Luca II");
+        me.setMoney(null);
+        ksession.insert( me );
+        int rulesFired = ksession.fireAllRules();
+        assertEquals(rulesFired, 1);
+    }
+
+    @Test
+    public void testNegatedConstraint() {
+        // DROOLS-5791
+        String str =
+                "rule R when\n" +
+                "  $i : Integer()\n" +
+                "  String( !($i.intValue > length) )\n" +
+                "then\n" +
+                "end";
+
+        KieSession ksession = getKieSession( str );
+
+        ksession.insert( 5 );
+        ksession.insert( "test" );
+        assertEquals(0, ksession.fireAllRules());
+    }
+
+    @Test
+    public void testMethodCallWithClass() {
+        final String str = "package org.drools.mvel.compiler\n" +
+                "import " + FactWithMethod.class.getCanonicalName() + ";" +
+                "rule r1\n" +
+                "when\n" +
+                "    FactWithMethod( checkClass( java.lang.String.class ) )\n" +
+                "then\n" +
+                "end\n";
+
+        KieSession ksession = getKieSession( str );
+        final FactWithMethod fact = new FactWithMethod();
+        ksession.insert(fact);
+        final int rules = ksession.fireAllRules();
+        assertEquals(1, rules);
+    }
+
+    public static class FactWithMethod {
+
+        public FactWithMethod() {}
+
+        public boolean checkClass(Class<?> clazz) {
+            return clazz.equals(String.class);
+        }
+    }
+
+    public interface MyInterface {
+        default String getDefaultString() {
+            return "DEFAULT";
+        }
+    }
+
+    public static class MyClass implements MyInterface { }
+
+    @Test
+    public void testUseDefaultMethod() {
+        // DROOLS-6358
+        final String str =
+                "package org.drools.mvel.compiler\n" +
+                "global java.util.List list;\n" +
+                "import " + MyClass.class.getCanonicalName() + ";" +
+                "rule r1\n" +
+                "when\n" +
+                "    MyClass( val: defaultString )\n" +
+                "then\n" +
+                "    list.add(val);" +
+                "end\n";
+
+        KieSession ksession = getKieSession( str );
+        final List<String> list = new ArrayList<>();
+        ksession.setGlobal("list", list);
+
+        final FactWithMethod fact = new FactWithMethod();
+        ksession.insert(new MyClass());
+        ksession.fireAllRules();
+        assertEquals(1, list.size());
+        assertEquals("DEFAULT", list.get(0));
+    }
+
+    @Test
+    public void testEnclosedBinding() {
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                     "global java.util.List result;\n" +
+                     "rule R when\n" +
+                     "  $p : Person( ($n : name == \"Mario\") )\n" +
+                     "then\n" +
+                     "  result.add($n);\n" +
+                     "end";
+
+        KieSession ksession = getKieSession(str);
+        List<String> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        Person me = new Person("Mario", 40);
+        ksession.insert(me);
+        ksession.fireAllRules();
+
+        assertThat(result).containsExactly("Mario");
+    }
+
+    @Test
+    public void testComplexEnclosedBinding() {
+        String str =
+                "import " + Person.class.getCanonicalName() + ";" +
+                     "global java.util.List result;\n" +
+                     "rule R when\n" +
+                     "  $p : Person( ($n : name == \"Mario\") && (age > 20) )\n" +
+                     "then\n" +
+                     "  result.add($n);\n" +
+                     "end";
+
+        KieSession ksession = getKieSession(str);
+        List<Object> result = new ArrayList<>();
+        ksession.setGlobal("result", result);
+
+        Person me = new Person("Mario", 40);
+        ksession.insert(me);
+        ksession.fireAllRules();
+
+        assertThat(result).containsExactly("Mario");
     }
 }

@@ -19,6 +19,7 @@ package org.drools.modelcompiler.constraints;
 import java.util.List;
 import java.util.stream.Stream;
 
+import org.drools.core.RuleBaseConfiguration;
 import org.drools.core.common.InternalFactHandle;
 import org.drools.core.common.InternalWorkingMemory;
 import org.drools.core.rule.ContextEntry;
@@ -52,7 +53,7 @@ public class CombinedConstraint extends AbstractConstraint {
     }
 
     @Override
-    public boolean isIndexable( short nodeType ) {
+    public boolean isIndexable( short nodeType, RuleBaseConfiguration config ) {
         return false;
     }
 
@@ -73,6 +74,11 @@ public class CombinedConstraint extends AbstractConstraint {
 
     @Override
     public InternalReadAccessor getFieldExtractor() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Declaration getIndexExtractor() {
         throw new UnsupportedOperationException();
     }
 
@@ -103,6 +109,40 @@ public class CombinedConstraint extends AbstractConstraint {
     @Override
     public boolean isTemporal() {
         return false;
+    }
+
+    @Override
+    public int hashCode() {
+        final int prime = 31;
+        int result = 1;
+        result = prime * result + ((constraints == null) ? 0 : constraints.hashCode());
+        result = prime * result + ((type == null) ? 0 : type.hashCode());
+        return result;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (obj == null) {
+            return false;
+        }
+        if (getClass() != obj.getClass()) {
+            return false;
+        }
+        CombinedConstraint other = (CombinedConstraint) obj;
+        if (constraints == null) {
+            if (other.constraints != null) {
+                return false;
+            }
+        } else if (!constraints.equals(other.constraints)) {
+            return false;
+        }
+        if (type != other.type) {
+            return false;
+        }
+        return true;
     }
 
     @Override

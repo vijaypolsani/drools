@@ -26,11 +26,12 @@ import org.drools.core.util.FastIterator;
 import org.drools.core.util.Iterator;
 import org.drools.core.util.LinkedList;
 
-public class TupleList implements TupleMemory, Entry<TupleList>, Serializable {
+public class TupleList<C> implements TupleMemory, Entry<TupleList<C>>, Serializable {
 
     public static final long       serialVersionUID = 510l;
 
-    private TupleList              next;
+    private TupleList<C>           previous;
+    private TupleList<C>           next;
 
     private Tuple                  first;
     private Tuple                  last;
@@ -39,7 +40,13 @@ public class TupleList implements TupleMemory, Entry<TupleList>, Serializable {
 
     private int                    size;
 
+    private C                      context;
+
     public TupleList() {
+    }
+
+    public TupleList(C c) {
+        this.context = c;
     }
 
     public TupleList( Tuple first, Tuple last, int size ) {
@@ -48,11 +55,15 @@ public class TupleList implements TupleMemory, Entry<TupleList>, Serializable {
         this.size = size;
     }
 
+    public C getContext() {
+        return context;
+    }
+
     public boolean isEmpty() {
         return size == 0;
     }
 
-    public Tuple getFirst(Tuple rightTuple) {
+    public Tuple getFirst(Tuple tuple) {
         return this.first;
     }
     
@@ -71,8 +82,24 @@ public class TupleList implements TupleMemory, Entry<TupleList>, Serializable {
     }    
     
     public void removeAdd(Tuple tuple) {
-        remove(tuple);
-        add(tuple);
+        if (this.last == tuple) {
+            return;
+        }
+
+        Tuple previous = tuple.getPrevious();
+        Tuple next = tuple.getNext();
+        if (previous == null) {
+            next.setPrevious( null );
+            this.first = next;
+        } else {
+            previous.setNext( next );
+            next.setPrevious( previous );
+        }
+
+        this.last.setNext( tuple );
+        tuple.setPrevious( this.last );
+        tuple.setNext( null );
+        this.last = tuple;
     }
 
     public void add(final Tuple tuple) {
@@ -226,6 +253,14 @@ public class TupleList implements TupleMemory, Entry<TupleList>, Serializable {
         return false;
     }
 
+    public TupleList getPrevious() {
+        return this.previous;
+    }
+
+    public void setPrevious(final TupleList previous) {
+        this.previous = previous;
+    }
+
     public TupleList getNext() {
         return this.next;
     }
@@ -245,8 +280,10 @@ public class TupleList implements TupleMemory, Entry<TupleList>, Serializable {
     }
 
     protected void copyStateInto(TupleList other) {
+        other.previous = previous;
         other.next = next;
         other.first = first;
+        other.context = context;
         other.last = last;
         other.iterator = iterator;
         other.size = size;

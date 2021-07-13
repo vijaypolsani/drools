@@ -17,8 +17,11 @@
 package org.drools.testcoverage.common.model;
 
 import java.io.Serializable;
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class Person implements Serializable {
 
@@ -35,6 +38,8 @@ public class Person implements Serializable {
     private boolean happy;
     private Cheese cheese;
     private String hair;
+    private BigDecimal salary;
+    private Map<String, Comparable> map = new HashMap<>();
 
     private Object object;
 
@@ -51,6 +56,12 @@ public class Person implements Serializable {
         this.age = age;
     }
 
+    public Person(final int id, final String name, final int age) {
+        this.id = id;
+        this.name = name;
+        this.age = age;
+    }
+
     public Person(final String name, final String likes, final int age) {
         this.name = name;
         this.likes = likes;
@@ -60,6 +71,12 @@ public class Person implements Serializable {
     public Person(final String name, final String likes) {
         this.name = name;
         this.likes = likes;
+    }
+
+    public Person(final String name, final int age, final BigDecimal salary) {
+        this.name = name;
+        this.age = age;
+        this.salary = salary;
     }
 
     public int getId() {
@@ -169,6 +186,22 @@ public class Person implements Serializable {
     @Override
     public String toString() {
         return String.format("%s[id='%s', name='%s']", getClass().getName(), id, name);
+    }
+
+    public BigDecimal getSalary() {
+        return salary;
+    }
+
+    public void setSalary(BigDecimal salary) {
+        this.salary = salary;
+    }
+
+    public Map<String, Comparable> getMap() {
+        return map;
+    }
+
+    public void setMap(Map<String, Comparable> map) {
+        this.map = map;
     }
 
     @Override

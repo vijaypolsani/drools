@@ -25,7 +25,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import com.github.javaparser.ast.CompilationUnit;
 import org.kie.dmn.api.feel.runtime.events.FEELEventListener;
 import org.kie.dmn.feel.FEEL;
 import org.kie.dmn.feel.codegen.feel11.CompiledFEELExpression;
@@ -41,10 +40,12 @@ import org.kie.dmn.feel.parser.feel11.profiles.DoCompileFEELProfile;
 import org.kie.dmn.feel.runtime.FEELFunction;
 import org.kie.dmn.feel.runtime.UnaryTest;
 import org.kie.dmn.feel.util.ClassLoaderUtil;
+import org.kie.dmn.model.api.GwtIncompatible;
 
 /**
  * Language runtime entry point
  */
+@GwtIncompatible
 public class FEELImpl
         implements FEEL {
 
@@ -63,6 +64,7 @@ public class FEELImpl
         this(ClassLoaderUtil.findDefaultClassLoader(), Collections.emptyList());
     }
 
+    @GwtIncompatible
     public FEELImpl(ClassLoader cl) {
         this(cl, Collections.emptyList());
     }
@@ -71,6 +73,7 @@ public class FEELImpl
         this(ClassLoaderUtil.findDefaultClassLoader(), profiles);
     }
 
+    @GwtIncompatible
     public FEELImpl(ClassLoader cl, List<FEELProfile> profiles) {
         this.classLoader = cl;
         this.profiles = Collections.unmodifiableList(profiles);
@@ -112,12 +115,12 @@ public class FEELImpl
                 profiles).getResult();
     }
 
-    public CompilationUnit generateExpressionSource(String expression, CompilerContext ctx) {
+    public ProcessedExpression compileExpression(String expression, CompilerContext ctx) {
         return new ProcessedExpression(
                 expression,
                 ctx,
                 ProcessedFEELUnit.DefaultMode.of(doCompile || ctx.isDoCompile()),
-                profiles).getSourceCode();
+                profiles);
     }
 
     @Override

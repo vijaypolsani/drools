@@ -17,22 +17,25 @@
 package org.drools.modelcompiler.builder.generator;
 
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.expr.Expression;
 import org.drools.mvel.parser.printer.PrintUtil;
 
+import static org.drools.modelcompiler.builder.generator.DrlxParseUtil.toClassOrInterfaceType;
 import static org.drools.modelcompiler.util.ClassUtil.toNonPrimitiveType;
 import static org.drools.modelcompiler.util.ClassUtil.toRawClass;
 
 public class TypedExpression {
 
-    private Expression expression;
-    protected Type type;
-    protected String fieldName;
+    private Class<?> originalPatternType;
+    private final Expression expression;
+    private Type type;
+    private final String fieldName;
 
     protected Boolean staticExpr;
     protected TypedExpression left;
@@ -86,7 +89,7 @@ public class TypedExpression {
     }
 
     public com.github.javaparser.ast.type.Type getJPType() {
-        return StaticJavaParser.parseClassOrInterfaceType(toNonPrimitiveType((Class<?>) type).getCanonicalName());
+        return toClassOrInterfaceType(toNonPrimitiveType((Class<?>) type));
     }
 
     public boolean isPrimitive() {
@@ -99,6 +102,10 @@ public class TypedExpression {
 
     public boolean isList() {
         return type != null && toRawClass(type).isAssignableFrom( List.class );
+    }
+
+    public boolean isMap() {
+        return type != null && toRawClass(type).isAssignableFrom( Map.class );
     }
 
     public TypedExpression setStatic(Boolean aStatic) {
@@ -129,11 +136,16 @@ public class TypedExpression {
     }
 
     public boolean isNumberLiteral() {
+        return isNumberLiteral(expression);
+    }
+
+    public static boolean isNumberLiteral(Expression expression) {
         return expression != null &&
                 (expression.isCharLiteralExpr()
                         || expression.isIntegerLiteralExpr()
                         || expression.isLongLiteralExpr()
-                        || expression.isDoubleLiteralExpr());
+                        || expression.isDoubleLiteralExpr()
+                        || expression.isEnclosedExpr() && isNumberLiteral(expression.asEnclosedExpr().getInner()));
     }
 
     public TypedExpression cloneWithNewExpression( Expression newExpression) {
@@ -142,6 +154,14 @@ public class TypedExpression {
         cloned.left = left;
         return cloned;
 
+    }
+
+    public Optional<Class<?>> getOriginalPatternType() {
+        return Optional.ofNullable(originalPatternType);
+    }
+
+    public void setOriginalPatternType(Class<?> originalPatternType) {
+        this.originalPatternType = originalPatternType;
     }
 
     @Override
@@ -176,5 +196,9 @@ public class TypedExpression {
 
     public Expression uncastExpression() {
         return DrlxParseUtil.uncastExpr(expression);
+    }
+
+    public boolean isBigDecimal() {
+        return type != null && toRawClass(type).isAssignableFrom( BigDecimal.class );
     }
 }

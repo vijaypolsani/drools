@@ -237,12 +237,17 @@ public class DMNRuntimeImpl
     }
 
     private DMNResultImpl createResult(DMNModel model, DMNContext context) {
-        DMNResultImpl result = new DMNResultImpl(model);
-        result.setContext( context.clone() );
+        DMNResultImpl result = createResultImpl(model, context);
 
         for (DecisionNode decision : model.getDecisions().stream().filter(d -> d.getModelNamespace().equals(model.getNamespace())).collect(Collectors.toSet())) {
             result.addDecisionResult(new DMNDecisionResultImpl(decision.getId(), decision.getName()));
         }
+        return result;
+    }
+
+    private DMNResultImpl createResultImpl(DMNModel model, DMNContext context) {
+        DMNResultImpl result = new DMNResultImpl(model);
+        result.setContext(context.clone()); // DMNContextFPAImpl.clone() creates DMNContextImpl
         return result;
     }
 
@@ -252,8 +257,8 @@ public class DMNRuntimeImpl
         Objects.requireNonNull(context, () -> MsgUtil.createMessage(Msg.PARAM_CANNOT_BE_NULL, "context"));
         Objects.requireNonNull(decisionServiceName, () -> MsgUtil.createMessage(Msg.PARAM_CANNOT_BE_NULL, "decisionServiceName"));
         boolean typeCheck = performRuntimeTypeCheck(model);
-        DMNResultImpl result = new DMNResultImpl(model);
-        result.setContext(context.clone());
+        DMNResultImpl result = createResultImpl(model, context);
+
         // the engine should evaluate all belonging to the "local" model namespace, not imported nodes explicitly.
         Optional<DecisionServiceNode> lookupDS = ((DMNModelImpl) model).getDecisionServices().stream()
                                                                     .filter(d -> d.getModelNamespace().equals(model.getNamespace()))
@@ -516,8 +521,8 @@ public class DMNRuntimeImpl
                     return false;
                 }
             }
-        } else {
-            if (destinationNode.getModelNamespace().equals(result.getContext().scopeNamespace().get())) {
+        } else { // this branch is: result context scopeNamespace Optional isPresent == true
+            if (destinationNode.getModelNamespace().equals(result.getContext().scopeNamespace().orElseThrow(IllegalStateException::new))) {
                 return false;
             } else {
                 Optional<String> importAlias = callerNode.getModelImportAliasFor(destinationNode.getModelNamespace(), destinationNode.getModelName());
@@ -787,5 +792,9 @@ public class DMNRuntimeImpl
 
     public InternalKnowledgeBase getInternalKnowledgeBase() {
         return runtimeKB.getInternalKnowledgeBase();
+    }
+
+    public DMNRuntimeKB getRuntimeKB() {
+        return runtimeKB;
     }
 }

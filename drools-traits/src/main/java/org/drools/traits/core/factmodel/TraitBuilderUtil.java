@@ -16,15 +16,6 @@
 
 package org.drools.traits.core.factmodel;
 
-import org.drools.core.factmodel.BuildUtils;
-import org.drools.core.factmodel.FieldDefinition;
-import org.drools.core.factmodel.traits.Thing;
-import org.drools.core.factmodel.traits.Trait;
-import org.drools.core.util.asm.ClassFieldInspector;
-import org.mvel2.asm.ClassWriter;
-import org.mvel2.asm.MethodVisitor;
-import org.mvel2.asm.Type;
-
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -36,7 +27,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.drools.core.factmodel.BuildUtils;
+import org.drools.core.factmodel.FieldDefinition;
+import org.drools.core.factmodel.traits.Thing;
+import org.drools.core.factmodel.traits.Trait;
+import org.drools.mvel.asm.AsmUtil;
+import org.drools.mvel.asm.ClassFieldInspectorImpl;
+import org.mvel2.asm.ClassWriter;
+import org.mvel2.asm.MethodVisitor;
+import org.mvel2.asm.Type;
+
 import static java.util.Arrays.asList;
+
 import static org.mvel2.asm.Opcodes.ACC_PUBLIC;
 import static org.mvel2.asm.Opcodes.ALOAD;
 import static org.mvel2.asm.Opcodes.GETFIELD;
@@ -62,7 +64,7 @@ public class TraitBuilderUtil {
 
             for (Map.Entry<Class<?>, List<Method>> entry : mixinMethodMap.entrySet()) {
                 Class<?> mixinClass = entry.getKey();
-                ClassFieldInspector cfi = new ClassFieldInspector( mixinClass );
+                ClassFieldInspectorImpl cfi = new ClassFieldInspectorImpl( mixinClass );
 
                 for ( Method m : entry.getValue() ) {
                     try {
@@ -160,7 +162,7 @@ public class TraitBuilderUtil {
         }
     }
 
-    static void buildMixinMethods( String masterName, MixinInfo mixinInfo, ClassWriter cw ) {
+    static void buildMixinMethods( String proxyName, MixinInfo mixinInfo, ClassWriter cw ) {
         if ( mixinInfo == null ) {
             return;
         }
@@ -170,12 +172,12 @@ public class TraitBuilderUtil {
 
             Set<Method> methods = mixinInfo.mixinMethods.get( mixinClass );
             if (methods != null) {
-                buildMixinMethods( cw, masterName, mixin, mixinClass, mixinInfo, methods, createdSignatures );
+                buildMixinMethods( cw, proxyName, mixin, mixinClass, mixinInfo, methods, createdSignatures );
             }
 
             Map<String, Method> map = mixinInfo.mixinGetSet.get( mixinClass );
             if (map != null) {
-                buildMixinMethods( cw, masterName, mixin, mixinClass, mixinInfo, map.values(), createdSignatures );
+                buildMixinMethods( cw, proxyName, mixin, mixinClass, mixinInfo, map.values(), createdSignatures );
             }
         }
     }
@@ -204,7 +206,7 @@ public class TraitBuilderUtil {
                 mv.visitFieldInsn( GETFIELD, BuildUtils.getInternalType( wrapperName ), mixin, Type.getDescriptor( mixinClass ) );
                 int j = 1;
                 for ( Class arg : method.getParameterTypes() ) {
-                    mv.visitVarInsn( BuildUtils.varType( arg.getName() ), j++ );
+                    mv.visitVarInsn( AsmUtil.varType( arg.getName() ), j++ );
                 }
                 mv.visitMethodInsn( INVOKEVIRTUAL,
                                     Type.getInternalName( mixinClass ),
@@ -212,7 +214,7 @@ public class TraitBuilderUtil {
                                     signature,
                                     false );
 
-                mv.visitInsn( BuildUtils.returnType( method.getReturnType().getName() ) );
+                mv.visitInsn( AsmUtil.returnType( method.getReturnType().getName() ) );
                 mv.visitMaxs( 0, 0 );
                 mv.visitEnd();
             }

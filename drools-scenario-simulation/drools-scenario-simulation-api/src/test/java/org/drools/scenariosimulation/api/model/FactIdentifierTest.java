@@ -18,43 +18,58 @@ package org.drools.scenariosimulation.api.model;
 
 import org.junit.Test;
 
+import static org.drools.scenariosimulation.api.utils.ConstantsHolder.IMPORTED_PREFIX;
 import static org.junit.Assert.assertEquals;
 
 public class FactIdentifierTest {
 
     @Test
+    public void importedFactIdentifierTest() {
+        String importedBookName = IMPORTED_PREFIX + "." + "Book";
+        FactIdentifier factIdentifier = FactIdentifier.create(importedBookName, importedBookName, IMPORTED_PREFIX);
+        assertEquals(importedBookName, factIdentifier.getName());
+        assertEquals(importedBookName, factIdentifier.getClassName());
+        assertEquals(IMPORTED_PREFIX, factIdentifier.getImportPrefix());
+    }
+
+    @Test
     public void getClassNameWithoutPackage() {
-        FactIdentifier factIdentifier = new FactIdentifier("test", "com.Test");
-        assertEquals(factIdentifier.getClassNameWithoutPackage(), "Test");
+        commonGetClassNameWithoutPackage("test", "com.Test", "Test");
     }
 
     @Test
     public void getClassNameWithoutPackage_LongPackage() {
-        FactIdentifier factIdentifier = new FactIdentifier("test", "com.project.Test");
-        assertEquals(factIdentifier.getClassNameWithoutPackage(), "Test");
+        commonGetClassNameWithoutPackage("test", "com.project.Test", "Test");
     }
 
     @Test
     public void getClassNameWithoutPackage_NoPackage() {
-        FactIdentifier factIdentifier = new FactIdentifier("test", "Test");
-        assertEquals(factIdentifier.getClassNameWithoutPackage(), "Test");
+        commonGetClassNameWithoutPackage("test", "Test", "Test");
+    }
+
+    private void commonGetClassNameWithoutPackage(String name, String className, String expectedClassName) {
+        FactIdentifier factIdentifier = FactIdentifier.create(name, className);
+        assertEquals(expectedClassName, factIdentifier.getClassNameWithoutPackage());
     }
 
     @Test
     public void getPackageWithoutClassName() {
-        FactIdentifier factIdentifier = new FactIdentifier("test", "com.Test");
-        assertEquals(factIdentifier.getPackageWithoutClassName(), "com");
+        commonGetPackageWithoutClassName("test", "com.Test", "com");
     }
 
     @Test
     public void getPackageWithoutClassName_LongPackage() {
-        FactIdentifier factIdentifier = new FactIdentifier("test", "com.project.Test");
-        assertEquals(factIdentifier.getPackageWithoutClassName(), "com.project");
+        commonGetPackageWithoutClassName("test", "com.project.Test", "com.project");
     }
 
     @Test
     public void getPackageWithoutClassName_NoPackage() {
-        FactIdentifier factIdentifier = new FactIdentifier("test", "Test");
-        assertEquals(factIdentifier.getPackageWithoutClassName(), "");
+        commonGetPackageWithoutClassName("test", "Test", "");
     }
+
+    private void commonGetPackageWithoutClassName(String name, String className, String expectedPackage) {
+        FactIdentifier factIdentifier = FactIdentifier.create(name, className);
+        assertEquals(expectedPackage, factIdentifier.getPackageWithoutClassName());
+    }
+    
 }

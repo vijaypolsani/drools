@@ -1,11 +1,30 @@
+/*
+ * Copyright 2021 Red Hat, Inc. and/or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.drools.mvelcompiler;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.VariableDeclarator;
@@ -18,23 +37,30 @@ import com.github.javaparser.ast.expr.EnclosedExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.IntegerLiteralExpr;
+import com.github.javaparser.ast.expr.LongLiteralExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.github.javaparser.ast.expr.NullLiteralExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.SimpleName;
 import com.github.javaparser.ast.expr.StringLiteralExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.stmt.ExpressionStmt;
-import com.github.javaparser.ast.stmt.Statement;
 import org.drools.core.util.ClassUtils;
+import org.drools.core.util.MethodUtils;
+import org.drools.core.util.MethodUtils.NullType;
+import org.drools.mvel.parser.ast.expr.BigDecimalLiteralExpr;
 import org.drools.mvel.parser.ast.expr.DrlNameExpr;
 import org.drools.mvel.parser.ast.visitor.DrlGenericVisitor;
-import org.drools.mvelcompiler.ast.BinaryTExpr;
+import org.drools.mvelcompiler.ast.BigDecimalArithmeticExprT;
+import org.drools.mvelcompiler.ast.BigDecimalConvertedExprT;
+import org.drools.mvelcompiler.ast.BinaryExprT;
 import org.drools.mvelcompiler.ast.CastExprT;
 import org.drools.mvelcompiler.ast.CharacterLiteralExpressionT;
 import org.drools.mvelcompiler.ast.FieldAccessTExpr;
 import org.drools.mvelcompiler.ast.FieldToAccessorTExpr;
 import org.drools.mvelcompiler.ast.IntegerLiteralExpressionT;
 import org.drools.mvelcompiler.ast.ListAccessExprT;
+import org.drools.mvelcompiler.ast.LongLiteralExpressionT;
 import org.drools.mvelcompiler.ast.MethodCallExprT;
 import org.drools.mvelcompiler.ast.ObjectCreationExpressionT;
 import org.drools.mvelcompiler.ast.SimpleNameTExpr;
@@ -42,11 +68,16 @@ import org.drools.mvelcompiler.ast.StringLiteralExpressionT;
 import org.drools.mvelcompiler.ast.TypedExpression;
 import org.drools.mvelcompiler.ast.UnalteredTypedExpression;
 import org.drools.mvelcompiler.context.Declaration;
+import org.drools.mvelcompiler.context.DeclaredFunction;
 import org.drools.mvelcompiler.context.MvelCompilerContext;
 import org.drools.mvelcompiler.util.TypeUtils;
 
+import static java.util.Arrays.asList;
 import static java.util.Optional.ofNullable;
+
 import static org.drools.core.util.ClassUtils.getAccessor;
+import static org.drools.core.util.StreamUtils.optionalToStream;
+import static org.drools.mvelcompiler.ast.BigDecimalArithmeticExprT.toBigDecimalMethod;
 import static org.drools.mvelcompiler.util.OptionalUtils.map2;
 import static org.drools.mvelcompiler.util.TypeUtils.classFromType;
 
@@ -66,6 +97,8 @@ import static org.drools.mvelcompiler.util.TypeUtils.classFromType;
  */
 public class RHSPhase implements DrlGenericVisitor<TypedExpression, RHSPhase.Context> {
 
+    private final MethodCallExprVisitor methodCallExprVisitor;
+
     static class Context {
         final Optional<TypedExpression> scope;
 
@@ -82,9 +115,10 @@ public class RHSPhase implements DrlGenericVisitor<TypedExpression, RHSPhase.Con
 
     RHSPhase(MvelCompilerContext mvelCompilerContext) {
         this.mvelCompilerContext = mvelCompilerContext;
+        methodCallExprVisitor = new MethodCallExprVisitor(this, this.mvelCompilerContext);
     }
 
-    public TypedExpression invoke(Statement statement) {
+    public TypedExpression invoke(Node statement) {
         Context ctx = new Context(null);
 
         return statement.accept(this, ctx);
@@ -106,6 +140,8 @@ public class RHSPhase implements DrlGenericVisitor<TypedExpression, RHSPhase.Con
 
     private TypedExpression simpleNameAsFirstNode(SimpleName n) {
         return asDeclaration(n)
+                .map(Optional::of)
+                .orElseGet(() -> asPropertyAccessorOfRootPattern(n))
                 .map(Optional::of)
                 .orElseGet(() -> asEnum(n))
                 .orElseGet(() -> new UnalteredTypedExpression(n));
@@ -152,6 +188,14 @@ public class RHSPhase implements DrlGenericVisitor<TypedExpression, RHSPhase.Con
         return map2(lastTypedExpression, optAccessor, FieldToAccessorTExpr::new);
     }
 
+
+    private Optional<TypedExpression> asPropertyAccessorOfRootPattern(SimpleName n) {
+        Optional<Class<?>> scopeType = mvelCompilerContext.getRootPattern();
+        Optional<Method> optAccessor = scopeType.flatMap(t -> ofNullable(getAccessor(classFromType(t), n.asString())));
+
+        return map2(mvelCompilerContext.createRootTypePrefix(), optAccessor, FieldToAccessorTExpr::new);
+    }
+
     @Override
     public TypedExpression visit(FieldAccessExpr n, Context arg) {
         TypedExpression scope = n.getScope().accept(this, arg);
@@ -160,21 +204,56 @@ public class RHSPhase implements DrlGenericVisitor<TypedExpression, RHSPhase.Con
 
     @Override
     public TypedExpression visit(MethodCallExpr n, Context arg) {
-        Optional<TypedExpression> scope = n.getScope().map(s -> s.accept(this, arg));
-        TypedExpression name = n.getName().accept(this, new Context(scope.orElse(null)));
-        final List<TypedExpression> arguments = new ArrayList<>(n.getArguments().size());
-        for(Expression child : n.getArguments()) {
-            TypedExpression a = child.accept(this, arg);
-            arguments.add(a);
-        }
-        return new MethodCallExprT(n.getName().asString(), scope, arguments, name.getType());
+        return n.accept(methodCallExprVisitor, arg);
     }
 
     @Override
     public TypedExpression visit(BinaryExpr n, Context arg) {
         TypedExpression left = n.getLeft().accept(this, arg);
         TypedExpression right = n.getRight().accept(this, arg);
-        return new BinaryTExpr(left, right, n.getOperator());
+        return withPossiblyBigDecimalConversion(left, right, n.getOperator());
+    }
+
+    private TypedExpression withPossiblyBigDecimalConversion(TypedExpression left, TypedExpression right, BinaryExpr.Operator operator) {
+        Optional<Type> optTypeLeft = left.getType();
+        Optional<Type> optTypeRight = right.getType();
+
+        if (!optTypeLeft.isPresent() || !optTypeRight.isPresent()) { // coerce only when types are known
+            return new BinaryExprT(left, right, operator);
+        }
+
+        Type typeLeft = optTypeLeft.get();
+        Type typeRight = optTypeRight.get();
+
+        boolean binaryOperatorNeedBigDecimalConversion = asList(BinaryExpr.Operator.PLUS,
+                                                                BinaryExpr.Operator.DIVIDE,
+                                                                BinaryExpr.Operator.MINUS,
+                                                                BinaryExpr.Operator.MULTIPLY,
+                                                                BinaryExpr.Operator.REMAINDER,
+                                                                BinaryExpr.Operator.EQUALS,
+                                                                BinaryExpr.Operator.NOT_EQUALS
+        ).contains(operator);
+
+        boolean isStringConcatenation = operator == BinaryExpr.Operator.PLUS &&
+                (typeLeft == String.class || typeRight == String.class);
+
+        if (binaryOperatorNeedBigDecimalConversion && !isStringConcatenation) {
+
+            boolean shouldNegate = operator == BinaryExpr.Operator.NOT_EQUALS;
+
+            if (typeLeft == BigDecimal.class && typeRight == BigDecimal.class) { // do not convert
+                return new BigDecimalArithmeticExprT(toBigDecimalMethod(operator),
+                                                     left, right, shouldNegate);
+            } else if (typeLeft != BigDecimal.class && typeRight == BigDecimal.class) { // convert left
+                return new BigDecimalArithmeticExprT(toBigDecimalMethod(operator),
+                                                     new BigDecimalConvertedExprT(left), right, shouldNegate);
+            } else if (typeLeft == BigDecimal.class && typeRight != BigDecimal.class) { // convert right
+                return new BigDecimalArithmeticExprT(toBigDecimalMethod(operator),
+                                                     left, new BigDecimalConvertedExprT(right), shouldNegate);
+            }
+        }
+
+        return new BinaryExprT(left, right, operator);
     }
 
     @Override
@@ -214,13 +293,28 @@ public class RHSPhase implements DrlGenericVisitor<TypedExpression, RHSPhase.Con
     }
 
     @Override
+    public TypedExpression visit(LongLiteralExpr n, Context arg) {
+        return new LongLiteralExpressionT(n);
+    }
+
+    @Override
     public TypedExpression defaultMethod(Node n, Context context) {
         return new UnalteredTypedExpression(n);
     }
 
     @Override
     public TypedExpression visit(ObjectCreationExpr n, Context arg) {
-        return new ObjectCreationExpressionT(n, resolveType(n.getType()));
+        List<TypedExpression> constructorArguments = new ArrayList<>();
+        for(Expression e : n.getArguments()) {
+            TypedExpression compiledArgument = e.accept(this, arg);
+            constructorArguments.add(compiledArgument);
+        }
+        return new ObjectCreationExpressionT(constructorArguments, resolveType(n.getType()));
+    }
+
+    @Override
+    public TypedExpression visit(NullLiteralExpr n, Context arg) {
+        return new UnalteredTypedExpression(n, NullType.class);
     }
 
     @Override
@@ -243,6 +337,11 @@ public class RHSPhase implements DrlGenericVisitor<TypedExpression, RHSPhase.Con
     public TypedExpression visit(CastExpr n, Context arg) {
         TypedExpression innerExpr = n.getExpression().accept(this, arg);
         return new CastExprT(innerExpr, resolveType(n.getType()));
+    }
+
+    @Override
+    public TypedExpression visit(BigDecimalLiteralExpr n, Context arg) {
+        return new BigDecimalConvertedExprT(new StringLiteralExpressionT(new StringLiteralExpr(n.getValue())));
     }
 
     private Class<?> resolveType(com.github.javaparser.ast.type.Type type) {

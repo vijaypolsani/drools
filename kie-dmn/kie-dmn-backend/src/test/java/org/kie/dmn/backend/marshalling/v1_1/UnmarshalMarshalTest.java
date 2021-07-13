@@ -58,7 +58,7 @@ import static org.junit.Assert.fail;
 
 public class UnmarshalMarshalTest {
 
-    protected static final Logger logger = LoggerFactory.getLogger(UnmarshalMarshalTest.class);
+    protected static final Logger LOG = LoggerFactory.getLogger(UnmarshalMarshalTest.class);
 
     @Test
     public void test0001() throws Exception {
@@ -99,56 +99,56 @@ public class UnmarshalMarshalTest {
 
     @Test
     public void testDish() throws Exception {
-        testRoundTrip("", "dish-decision.xml");
+        testRoundTrip("org/kie/dmn/backend/marshalling/v1_1/", "dish-decision.xml");
     }
 
     @Ignore("failing to compare over a xsi:type=\"tImport\" attribute, but why content generated 'control' need to explicit it ?")
     @Test
     public void testDummyDefinitions() throws Exception {
-        testRoundTrip("", "dummy-definitions.xml");
+        testRoundTrip("org/kie/dmn/backend/marshalling/v1_1/", "dummy-definitions.xml");
     }
 
     @Test
     public void testDummyRelation() throws Exception {
-        testRoundTrip("", "dummy-relation.xml");
+        testRoundTrip("org/kie/dmn/backend/marshalling/v1_1/", "dummy-relation.xml");
     }
 
     @Test
     public void testCh11() throws Exception {
-        testRoundTrip("", "ch11example.xml");
+        testRoundTrip("org/kie/dmn/backend/marshalling/v1_1/", "ch11example.xml");
     }
 
     @Test
     public void testHello_World_semantic_namespace() throws Exception {
-        testRoundTrip("", "Hello_World_semantic_namespace.dmn");
+        testRoundTrip("org/kie/dmn/backend/marshalling/v1_1/", "Hello_World_semantic_namespace.dmn");
     }
 
     @Test
     public void testHello_World_semantic_namespace_with_extensions() throws Exception {
         DMNMarshaller marshaller = DMNMarshallerFactory.newMarshallerWithExtensions(Arrays.asList(new MyTestRegister()));
-        testRoundTrip("", "Hello_World_semantic_namespace_with_extensions.dmn", marshaller);
+        testRoundTrip("org/kie/dmn/backend/marshalling/v1_1/", "Hello_World_semantic_namespace_with_extensions.dmn", marshaller);
     }
 
     @Test
     public void testHello_World_semantic_namespace_with_extensions_other_ns_location() throws Exception {
         DMNMarshaller marshaller = DMNMarshallerFactory.newMarshallerWithExtensions(Arrays.asList(new MyTestRegister()));
-        testRoundTrip("", "Hello_World_semantic_namespace_with_extensions_other_ns_location.dmn", marshaller);
+        testRoundTrip("org/kie/dmn/backend/marshalling/v1_1/", "Hello_World_semantic_namespace_with_extensions_other_ns_location.dmn", marshaller);
     }
 
     @Test
     public void testSemanticNamespace() throws Exception {
-        testRoundTrip("", "semantic-namespace.xml");
+        testRoundTrip("org/kie/dmn/backend/marshalling/v1_1/", "semantic-namespace.xml");
     }
 
     @Ignore("The current file cannot marshal back extension elements because they don't provide converters.")
     @Test
     public void test20161014() throws Exception {
-        testRoundTrip("", "test20161014.xml");
+        testRoundTrip("org/kie/dmn/backend/marshalling/v1_1/", "test20161014.xml");
     }
 
     @Test
     public void testQNameSerialization() throws Exception {
-        testRoundTrip("", "hardcoded_function_definition.dmn");
+        testRoundTrip("org/kie/dmn/backend/marshalling/v1_1/", "hardcoded_function_definition.dmn");
     }
 
     @Ignore("A problem with the StaxDriver has still to be resolved.")
@@ -174,18 +174,18 @@ public class UnmarshalMarshalTest {
         Definitions unmarshal = marshaller.unmarshal(new InputStreamReader(fis));
 
         Validator v = Validator.forLanguage(Languages.W3C_XML_SCHEMA_NS_URI);
-        v.setSchemaSource(new StreamSource(this.getClass().getResource("/dmn.xsd").getFile()));
+        v.setSchemaSource(new StreamSource(this.getClass().getResource("/DMN11.xsd").getFile()));
         ValidationResult validateInputResult = v.validateInstance(new StreamSource(inputXMLFile));
         if (!validateInputResult.isValid()) {
             for (ValidationProblem p : validateInputResult.getProblems()) {
-                System.err.println(p);
+                LOG.error("{}", p);
             }
         }
         assertTrue(validateInputResult.isValid());
 
         final File subdirFile = new File(baseOutputDir, subdir);
         if (!subdirFile.mkdirs()) {
-            logger.warn("mkdirs() failed for File: " + subdirFile.getAbsolutePath() + "!");
+            LOG.warn("mkdirs() failed for File: {}", subdirFile.getAbsolutePath());
         }
         FileOutputStream sourceFos = new FileOutputStream(new File(baseOutputDir, subdir + "a." + xmlfile));
         Files.copy(
@@ -195,7 +195,7 @@ public class UnmarshalMarshalTest {
         sourceFos.flush();
         sourceFos.close();
 
-        System.out.println(marshaller.marshal(unmarshal));
+        LOG.debug("{}", marshaller.marshal(unmarshal));
         File outputXMLFile = new File(baseOutputDir, subdir + "b." + xmlfile);
         try (FileWriter targetFos = new FileWriter(outputXMLFile)) {
             marshaller.marshal(unmarshal, targetFos);
@@ -205,21 +205,21 @@ public class UnmarshalMarshalTest {
         ValidationResult validateOutputResult = v.validateInstance(new StreamSource(outputXMLFile));
         if (!validateOutputResult.isValid()) {
             for (ValidationProblem p : validateOutputResult.getProblems()) {
-                System.err.println(p);
+                LOG.error("{}", p);
             }
         }
         assertTrue(validateOutputResult.isValid());
 
-        System.out.println("\n---\nDefault XMLUnit comparison:");
+        LOG.debug("\n---\nDefault XMLUnit comparison:");
         Source control = Input.fromFile(inputXMLFile).build();
         Source test = Input.fromFile(outputXMLFile).build();
         Diff allDiffsSimilarAndDifferent = DiffBuilder
                 .compare(control)
                 .withTest(test)
                 .build();
-        allDiffsSimilarAndDifferent.getDifferences().forEach(System.out::println);
+        allDiffsSimilarAndDifferent.getDifferences().forEach(m -> LOG.debug("{}", m));
 
-        System.out.println("XMLUnit comparison with customized similarity for defaults:");
+        LOG.info("XMLUnit comparison with customized similarity for defaults:");
         // in the following a manual DifferenceEvaluator is needed until XMLUnit is configured for properly parsing the XSD linked inside the XML,
         // in order to detect the optional+defaultvalue attributes of xml element which might be implicit in source-test, and explicit in test-serialized.
         /*
@@ -278,9 +278,9 @@ public class UnmarshalMarshalTest {
                 .ignoreWhitespace()
                 .checkForSimilar()
                 .build();
-        checkSimilar.getDifferences().forEach(System.err::println);
+        checkSimilar.getDifferences().forEach(m -> LOG.error("{}", m));
         if (!checkSimilar.getDifferences().iterator().hasNext()) {
-            System.out.println("[ EMPTY - no diffs using customized similarity ]");
+            LOG.info("[ EMPTY - no diffs using customized similarity ]");
         }
         assertFalse("XML are NOT similar: " + checkSimilar.toString(), checkSimilar.hasDifferences());
     }

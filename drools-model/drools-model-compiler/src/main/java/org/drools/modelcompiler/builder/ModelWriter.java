@@ -20,6 +20,7 @@ package org.drools.modelcompiler.builder;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.drools.compiler.compiler.io.memory.MemoryFileSystem;
@@ -28,6 +29,7 @@ import org.kie.api.builder.ReleaseId;
 
 import static org.drools.modelcompiler.CanonicalKieModule.MODEL_VERSION;
 import static org.drools.modelcompiler.CanonicalKieModule.getModelFileWithGAV;
+import static org.drools.modelcompiler.CanonicalKieModule.getGeneratedClassNamesFile;
 
 public class ModelWriter {
 
@@ -64,12 +66,28 @@ public class ModelWriter {
         return basePath + "/" + folderName + "/" + nameAsString + ".java";
     }
 
-    public void writeModelFile(Collection<String> modelSources, MemoryFileSystem trgMfs, ReleaseId releaseId) {
+    public String getBasePath() {
+        return basePath;
+    }
+
+    public void writeModelFile( Collection<String> modelSources, MemoryFileSystem trgMfs, ReleaseId releaseId) {
         String pkgNames = MODEL_VERSION + Drools.getFullVersion() + "\n";
         if (!modelSources.isEmpty()) {
             pkgNames += modelSources.stream().collect(Collectors.joining("\n"));
         }
         trgMfs.write(getModelFileWithGAV(releaseId), pkgNames.getBytes());
+    }
+
+    public void writeGeneratedClassNamesFile(Set<String> generatedClassNames, MemoryFileSystem trgMfs, ReleaseId releaseId) {
+        trgMfs.write(getGeneratedClassNamesFile(releaseId), generatedClassNamesFileContent(generatedClassNames).getBytes());
+    }
+
+    public static String generatedClassNamesFileContent(Set<String> generatedClassNames) {
+        String content = "";
+        if (!generatedClassNames.isEmpty()) {
+            content = generatedClassNames.stream().collect(Collectors.joining("\n"));
+        }
+        return content;
     }
 
     public static class Result {
@@ -80,10 +98,6 @@ public class ModelWriter {
         public Result(List<String> sourceFiles, List<String> modelFiles) {
             this.sourceFiles = sourceFiles;
             this.modelFiles = modelFiles;
-        }
-
-        public String[] getSources() {
-            return sourceFiles.toArray(new String[sourceFiles.size()]);
         }
 
         public List<String> getSourceFiles() {

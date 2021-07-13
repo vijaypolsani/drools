@@ -16,14 +16,22 @@
 
 package org.kie.dmn.typesafe;
 
+import java.time.Duration;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.Period;
 import java.time.temporal.Temporal;
 import java.time.temporal.TemporalAmount;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.kie.dmn.api.core.DMNModel;
@@ -34,6 +42,8 @@ import org.kie.dmn.feel.lang.types.BuiltInType;
 public class DMNAllTypesIndex {
 
     private final List<DMNType> indexedTypes = new ArrayList<>();
+
+    public static final Set<BuiltInType> TEMPORALS = new HashSet<>(Arrays.asList(BuiltInType.DURATION, BuiltInType.DATE, BuiltInType.TIME, BuiltInType.DATE_TIME));
 
     Map<IndexKey, DMNModelTypesIndex.IndexValue> mapNamespaceIndex = new HashMap<>();
 
@@ -129,6 +139,39 @@ public class DMNAllTypesIndex {
                 return TemporalAmount.class;
             default:
                 throw new IllegalArgumentException();
+        }
+    }
+
+    public Optional<Class<?>> getJacksonDeserializeAs(DMNType fieldDMNType) {
+        if (!DMNTypeUtils.isFEELBuiltInType(fieldDMNType)) {
+            return Optional.empty();
+        }
+        BuiltInType builtin = DMNTypeUtils.getFEELBuiltInType(fieldDMNType);
+        if (!TEMPORALS.contains(builtin)) { // quick path.
+            return Optional.empty();
+        }
+        if (builtin == BuiltInType.DURATION) {
+            switch (fieldDMNType.getName()) {
+                case SimpleType.YEARS_AND_MONTHS_DURATION:
+                case "yearMonthDuration":
+                    return Optional.of(Period.class);
+                case SimpleType.DAYS_AND_TIME_DURATION:
+                case "dayTimeDuration":
+                    return Optional.of(Duration.class);
+                default:
+                    throw new IllegalStateException();
+            }
+        } else {
+            switch (builtin) {
+                case DATE:
+                    return Optional.of(LocalDate.class);
+                case TIME:
+                    return Optional.of(LocalTime.class);
+                case DATE_TIME:
+                    return Optional.of(LocalDateTime.class);
+                default:
+                    return Optional.empty();
+            }
         }
     }
 }

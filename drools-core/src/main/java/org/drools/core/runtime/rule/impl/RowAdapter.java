@@ -36,7 +36,7 @@ public class RowAdapter implements Row {
     }
 
     private InternalFactHandle getFactHandle(Declaration declr) {
-        return this.factHandles[ declr.getOffset() ];
+        return this.factHandles[ declr.getPattern().getPatternId() ];
     }
 
     public Object get(String identifier) {
@@ -48,7 +48,7 @@ public class RowAdapter implements Row {
             throw new RuntimeException("The identifier '" + identifier + "' does not exist as a bound variable for this query" );
         }
         InternalFactHandle factHandle = getFactHandle( declr );
-        return declr.getValue( null, factHandle.getObject() );
+        return declr.getValue( null, factHandle );
     }
 
     public FactHandle getFactHandle(String identifier) {

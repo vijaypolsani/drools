@@ -24,18 +24,18 @@ import java.lang.reflect.Method;
 import org.drools.core.base.ClassFieldReader;
 import org.drools.core.base.ValueType;
 import org.drools.core.common.DroolsObjectInputStream;
+import org.drools.core.common.InternalFactHandle;
 import org.drools.core.common.InternalWorkingMemory;
 import org.drools.core.spi.AcceptsReadAccessor;
 import org.drools.core.spi.InternalReadAccessor;
+import org.drools.core.spi.Tuple;
+import org.drools.core.spi.TupleValueExtractor;
 
 import static org.drools.core.util.ClassUtils.canonicalName;
 import static org.drools.core.util.ClassUtils.convertFromPrimitiveType;
 
-public class Declaration
-    implements
-    Externalizable,
-    AcceptsReadAccessor,
-    Cloneable {
+public class Declaration implements Externalizable, AcceptsReadAccessor, TupleValueExtractor {
+
     // ------------------------------------------------------------
     // Instance members
     // ------------------------------------------------------------
@@ -131,6 +131,8 @@ public class Declaration
         pattern = (Pattern) in.readObject();
         internalFact = in.readBoolean();
         bindingName = (String) in.readObject();
+        xPathOffset = in.readInt();
+
     }
 
     public void writeExternal(ObjectOutput out) throws IOException {
@@ -145,6 +147,7 @@ public class Declaration
         out.writeObject( pattern );
         out.writeBoolean( internalFact );
         out.writeObject( bindingName );
+        out.writeInt(xPathOffset);
     }
 
     // ------------------------------------------------------------
@@ -173,6 +176,7 @@ public class Declaration
      *
      * @return The ValueType.
      */
+    @Override
     public ValueType getValueType() {
         return this.readAccessor.getValueType();
     }
@@ -190,12 +194,20 @@ public class Declaration
         this.pattern = pattern;
     }
 
-    public int getOffset() {
-        return pattern.getOffset() + xPathOffset;
+    public int getObjectIndex() {
+        return pattern.getObjectIndex() + xPathOffset;
+    }
+
+    public int getTupleIndex() {
+        return pattern.getTupleIndex() + xPathOffset;
     }
 
     public void setxPathOffset( int xPathOffset ) {
         this.xPathOffset = xPathOffset;
+    }
+
+    public int getxPathOffset() {
+        return xPathOffset;
     }
 
     public boolean isFromXpathChunk() {
@@ -229,6 +241,15 @@ public class Declaration
 
     public void setDeclarationClass( Class<?> declarationClass ) {
         this.declarationClass = declarationClass;
+    }
+
+    @Override
+    public Object getValue(InternalWorkingMemory workingMemory, Tuple tuple) {
+        return getValue( workingMemory, tuple.get( this ) );
+    }
+
+    public Object getValue(InternalWorkingMemory workingMemory, InternalFactHandle fh) {
+        return getValue( workingMemory, fh.getObject() );
     }
 
     public Object getValue(InternalWorkingMemory workingMemory,
@@ -328,15 +349,19 @@ public class Declaration
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
     public String toString() {
-        return "(" + this.readAccessor.getValueType() + ") " + this.identifier;
+        return "(" + (this.readAccessor != null ? this.readAccessor.getValueType() : "null accessor") + ") " + this.identifier;
     }
 
     public int hashCode() {
-        int result = 29 * this.pattern.getOffset();
-        result += 31 * this.readAccessor.hashCode();
-        result += 37 * this.identifier.hashCode();
+        final int PRIME = 31;
+        int result = 1;
+        result = PRIME * result + this.pattern.getTupleIndex();
+        result = PRIME * result + this.readAccessor.hashCode();
+        result = PRIME * result + this.identifier.hashCode();
+        result = PRIME * result + this.xPathOffset;
         return result;
     }
+
 
     public boolean equals(final Object object) {
         if ( this == object ) {
@@ -349,26 +374,27 @@ public class Declaration
 
         final Declaration other = (Declaration) object;
 
-        return this.pattern.getOffset() == other.pattern.getOffset() && this.identifier.equals( other.identifier ) && this.readAccessor.equals( other.readAccessor );
+        return this.pattern.getPatternId() == other.pattern.getPatternId() &&
+               this.identifier.equals(other.identifier) && this.readAccessor.equals(other.readAccessor) &&
+               this.xPathOffset == other.xPathOffset;
     }
 
     public boolean isInternalFact() {
         return internalFact;
     }
 
+    @Override
     public Declaration clone() {
-        return new Declaration( this.identifier,
-                                this.readAccessor,
-                                this.pattern );
+        Declaration declr = new Declaration( this.identifier, this.readAccessor, this.pattern );
+        declr.setBindingName(this.bindingName);
+        declr.setxPathOffset(this.xPathOffset);
+        return declr;
     }
 
-    public Declaration cloneWithPattern() {
-        return new Declaration( this.identifier,
-                                this.readAccessor,
-                                new Pattern( this.pattern.getIndex(),
-                                             this.pattern.getOffset(),
-                                             this.pattern.getObjectType(),
-                                             getIdentifier(),
-                                             isInternalFact()) );
+    public Declaration cloneWithPattern(Pattern pattern) {
+        Declaration declr = new Declaration( this.identifier, this.readAccessor, pattern );
+        declr.setBindingName(this.bindingName);
+        declr.setxPathOffset(this.xPathOffset);
+        return declr;
     }
 }

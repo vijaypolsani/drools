@@ -24,6 +24,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
 
+import org.drools.core.RuleBaseConfiguration;
 import org.drools.core.WorkingMemory;
 import org.drools.core.beliefsystem.BeliefSet;
 import org.drools.core.beliefsystem.BeliefSystem;
@@ -35,6 +36,7 @@ import org.drools.core.common.EqualityKey;
 import org.drools.core.common.InternalAgenda;
 import org.drools.core.common.InternalFactHandle;
 import org.drools.core.common.InternalRuleFlowGroup;
+import org.drools.core.common.InternalWorkingMemory;
 import org.drools.core.common.InternalWorkingMemoryEntryPoint;
 import org.drools.core.common.LogicalDependency;
 import org.drools.core.common.NamedEntryPoint;
@@ -294,7 +296,7 @@ public class DefaultKnowledgeHelper<T extends ModedAssertion<T>>
 
         InternalFactHandle handle = getFactHandleFromWM( object );
         NamedEntryPoint ep = (NamedEntryPoint) workingMemory.getEntryPoint( EntryPointId.DEFAULT.getEntryPointId() );
-        ObjectTypeConf otc = ep.getObjectTypeConfigurationRegistry().getObjectTypeConf( ep.getEntryPoint(), object );
+        ObjectTypeConf otc = ep.getObjectTypeConfigurationRegistry().getOrCreateObjectTypeConf( ep.getEntryPoint(), object );
 
         BeliefSystem beliefSystem;
         if ( value == null ) {
@@ -368,6 +370,14 @@ public class DefaultKnowledgeHelper<T extends ModedAssertion<T>>
             if ( object instanceof CoreWrapper ) {
                 handle = getFactHandleFromWM( ((CoreWrapper) object).getCore() );
             }
+            if ( handle == null && workingMemory.getKnowledgeBase().getConfiguration().getAssertBehaviour() == RuleBaseConfiguration.AssertBehaviour.EQUALITY ) {
+                InternalFactHandle modifiedFh = tuple.getFactHandle();
+                while (modifiedFh == null || modifiedFh.getObject() != object) {
+                    tuple = tuple.getParent();
+                    modifiedFh = tuple.getFactHandle();
+                }
+                handle = modifiedFh;
+            }
             if ( handle == null ) {
                 throw new RuntimeException( "Update error: handle not found for object: " + object + ". Is it in the working memory?" );
             }
@@ -376,12 +386,8 @@ public class DefaultKnowledgeHelper<T extends ModedAssertion<T>>
     }
     
     public InternalFactHandle getFactHandle(InternalFactHandle handle) {
-        Object object = handle.getObject();
-        handle = getFactHandleFromWM( object );
-        if ( handle == null ) {
-            throw new RuntimeException( "Update error: handle not found for object: " + object + ". Is it in the working memory?" );
-        }
-        return handle;
+        InternalFactHandle handleFromWM = getFactHandleFromWM( handle.getObject() );
+        return handleFromWM != null ? handleFromWM : handle;
     }
     
     public void update(final FactHandle handle,
@@ -477,7 +483,7 @@ public class DefaultKnowledgeHelper<T extends ModedAssertion<T>>
     }
 
     public Object get(final Declaration declaration) {
-        return declaration.getValue( workingMemory, this.tuple.getObject( declaration ) );
+        return declaration.getValue( workingMemory, tuple );
     }
 
     public Declaration getDeclaration(final String identifier) {
@@ -501,16 +507,17 @@ public class DefaultKnowledgeHelper<T extends ModedAssertion<T>>
     }
 
     private InternalFactHandle getFactHandleFromWM(final Object object) {
-        InternalFactHandle handle = null;
-        // entry point null means it is a generated fact, not a regular inserted fact
-        // NOTE: it would probably be a good idea to create a specific attribute for that
-            for ( EntryPoint ep : workingMemory.getEntryPoints() ) {
-                handle = (InternalFactHandle) ep.getFactHandle( object );
-                if( handle != null ) {
-                    break;
-                }
+        return getFactHandleFromWM(workingMemory, object);
+    }
+
+    public static InternalFactHandle getFactHandleFromWM(InternalWorkingMemory workingMemory, final Object object) {
+        for ( EntryPoint ep : workingMemory.getEntryPoints() ) {
+            InternalFactHandle handle = (InternalFactHandle) ep.getFactHandle( object );
+            if( handle != null ) {
+                return handle;
             }
-        return handle;
+        }
+        return null;
     }
     
     @SuppressWarnings("unchecked")

@@ -19,7 +19,6 @@ package org.drools.core.reteoo;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Properties;
 
@@ -28,6 +27,7 @@ import org.drools.core.base.ClassObjectType;
 import org.drools.core.common.DefaultFactHandle;
 import org.drools.core.common.PropagationContextFactory;
 import org.drools.core.impl.InternalKnowledgeBase;
+import org.drools.core.impl.KnowledgeBaseFactory;
 import org.drools.core.impl.StatefulKnowledgeSessionImpl;
 import org.drools.core.reteoo.ReteooBuilder.IdGenerator;
 import org.drools.core.reteoo.builder.BuildContext;
@@ -39,9 +39,10 @@ import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.kie.api.runtime.rule.FactHandle;
-import org.drools.core.impl.KnowledgeBaseFactory;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 public class ReteTest extends DroolsTestCase {
     private PropagationContextFactory pctxFactory;
@@ -134,8 +135,8 @@ public class ReteTest extends DroolsTestCase {
                                                                null),
                           ksession);
 
-        // LinkedList matches two ObjectTypeNodes        
-        h1.setObject(new LinkedList());
+        // ArrayList matches two ObjectTypeNodes        
+        h1.setObject(new ArrayList());
         rete.assertObject(h1,
                           pctxFactory.createPropagationContext(0,
                                                                PropagationContext.Type.INSERTION,
@@ -144,11 +145,11 @@ public class ReteTest extends DroolsTestCase {
                                                                null),
                           ksession);
 
-        ClassObjectTypeConf conf = (ClassObjectTypeConf) ksession.getObjectTypeConfigurationRegistry().getObjectTypeConf(this.entryPoint.getEntryPoint(), new ArrayList());
+        ClassObjectTypeConf conf = (ClassObjectTypeConf) ksession.getObjectTypeConfigurationRegistry().getOrCreateObjectTypeConf(this.entryPoint.getEntryPoint(), new ArrayList());
         assertLength(3,
                      conf.getObjectTypeNodes());
 
-        conf = (ClassObjectTypeConf) ksession.getObjectTypeConfigurationRegistry().getObjectTypeConf(this.entryPoint.getEntryPoint(), new ArrayList());
+        conf = (ClassObjectTypeConf) ksession.getObjectTypeConfigurationRegistry().getOrCreateObjectTypeConf(this.entryPoint.getEntryPoint(), new ArrayList());
         assertLength(3,
                      conf.getObjectTypeNodes());
 
@@ -258,7 +259,7 @@ public class ReteTest extends DroolsTestCase {
                    rete.getObjectTypeNodes(EntryPointId.DEFAULT).get(new ClassObjectType(List.class)));
 
         // ArrayConf should match two ObjectTypenodes for List and ArrayList
-        ClassObjectTypeConf arrayConf = (ClassObjectTypeConf) ksession.getObjectTypeConfigurationRegistry().getObjectTypeConf(this.entryPoint.getEntryPoint(), new ArrayList());
+        ClassObjectTypeConf arrayConf = (ClassObjectTypeConf) ksession.getObjectTypeConfigurationRegistry().getOrCreateObjectTypeConf(this.entryPoint.getEntryPoint(), new ArrayList());
         final ObjectTypeNode arrayOtn = arrayConf.getConcreteObjectTypeNode();
         assertEquals(2,
                      arrayConf.getObjectTypeNodes().length);

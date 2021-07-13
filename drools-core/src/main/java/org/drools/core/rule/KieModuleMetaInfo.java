@@ -15,20 +15,23 @@
 
 package org.drools.core.rule;
 
-import com.thoughtworks.xstream.XStream;
-import com.thoughtworks.xstream.io.xml.DomDriver;
-
 import java.io.Serializable;
 import java.util.Map;
 import java.util.Set;
 
-import static org.kie.soup.xstream.XStreamUtils.createTrustingXStream;
+import com.thoughtworks.xstream.XStream;
+import com.thoughtworks.xstream.io.xml.DomDriver;
 
-public class KieModuleMetaInfo implements Serializable{
-    private static final XStream xStream = createTrustingXStream(new DomDriver());
+import static org.kie.soup.xstream.XStreamUtils.createNonTrustingXStream;
 
-    static {
-        xStream.setClassLoader( KieModuleMetaInfo.class.getClassLoader() );
+public class KieModuleMetaInfo implements Serializable {
+
+    private static class Marshaller {
+        private static final XStream xStream = createNonTrustingXStream( new DomDriver() );
+
+        static {
+            xStream.setClassLoader( KieModuleMetaInfo.class.getClassLoader() );
+        }
     }
 
     private Map<String, TypeMetaInfo> typeMetaInfos;
@@ -42,11 +45,11 @@ public class KieModuleMetaInfo implements Serializable{
     }
 
     public String marshallMetaInfos() {
-        return xStream.toXML(this);
+        return Marshaller.xStream.toXML(this);
     }
 
     public static KieModuleMetaInfo unmarshallMetaInfos(String s) {
-        return (KieModuleMetaInfo)xStream.fromXML(s);
+        return (KieModuleMetaInfo)Marshaller.xStream.fromXML(s);
     }
 
     public Map<String, TypeMetaInfo> getTypeMetaInfos() {

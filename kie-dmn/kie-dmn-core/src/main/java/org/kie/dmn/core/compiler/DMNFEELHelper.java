@@ -25,8 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 
-import com.github.javaparser.ast.CompilationUnit;
-import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import org.antlr.v4.runtime.CommonToken;
 import org.kie.dmn.api.core.DMNContext;
 import org.kie.dmn.api.core.DMNMessage;
@@ -55,6 +53,9 @@ import org.kie.dmn.feel.util.ClassLoaderUtil;
 import org.kie.dmn.model.api.DMNElement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 
 public class DMNFEELHelper {
 
@@ -250,7 +251,7 @@ public class DMNFEELHelper {
                                                                      || (msg.getSourceId() != null && element.getId() != null && msg.getSourceId().equals(element.getId()))) );
     }
 
-    public ClassOrInterfaceDeclaration generateUnaryTestsSource(String unaryTests, DMNCompilerContext ctx, Type inputColumnType) {
+    public ClassOrInterfaceDeclaration generateUnaryTestsSource(String unaryTests, DMNCompilerContext ctx, Type inputColumnType, boolean isStatic) {
         CompilerContext compilerContext =
                 ctx.toCompilerContext()
                         .addInputVariableType("?", inputColumnType);
@@ -259,7 +260,11 @@ public class DMNFEELHelper {
         CompilationUnit compilationUnit = compiledUnaryTest.getSourceCode().clone();
         return compilationUnit.getType(0)
                 .asClassOrInterfaceDeclaration()
-                .setStatic(true);
+                .setStatic(isStatic);
+    }
+
+    public ClassOrInterfaceDeclaration generateStaticUnaryTestsSource(String unaryTests, DMNCompilerContext ctx, Type inputColumnType) {
+        return generateUnaryTestsSource(unaryTests, ctx, inputColumnType, true);
     }
 
     public static class FEELEventsListenerImpl implements FEELEventListener {
@@ -296,7 +301,7 @@ public class DMNFEELHelper {
 
     public ClassOrInterfaceDeclaration generateFeelExpressionSource(String input, CompilerContext compilerContext1) {
 
-        CompilationUnit compilationUnit = ((FEELImpl) feel).generateExpressionSource(input, compilerContext1);
+        CompilationUnit compilationUnit = ((FEELImpl) feel).compileExpression(input, compilerContext1).getSourceCode();
         return compilationUnit.getType(0)
                 .asClassOrInterfaceDeclaration()
                 .setStatic(true);

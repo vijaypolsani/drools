@@ -31,11 +31,10 @@ public class RightTupleImpl extends BaseTuple implements RightTuple {
 
     private LeftTuple            blocked;
 
-    private RightTuple            tempNextRightTuple;
-    private TupleMemory           tempRightTupleMemory;
-    private LeftTuple             tempBlocked;
+    private RightTuple           tempNextRightTuple;
+    private LeftTuple            tempBlocked;
 
-    private boolean             retracted;
+    private boolean              retracted;
 
     public RightTupleImpl() { }
     
@@ -171,14 +170,6 @@ public class RightTupleImpl extends BaseTuple implements RightTuple {
         this.tempNextRightTuple = tempNextRightTuple;
     }
 
-    public TupleMemory getTempRightTupleMemory() {
-        return tempRightTupleMemory;
-    }
-
-    public void setTempRightTupleMemory(TupleMemory tempRightTupleMemory) {
-        this.tempRightTupleMemory = tempRightTupleMemory;
-    }
-
     public int hashCode() {
         return getFactHandle().hashCode();
     }
@@ -198,7 +189,7 @@ public class RightTupleImpl extends BaseTuple implements RightTuple {
 
         RightTupleImpl other = (RightTupleImpl) object;
         // A ReteTuple is  only the same if it has the same hashCode, factId and parent
-        if ( (other == null) || (hashCode() != other.hashCode()) ) {
+        if (hashCode() != other.hashCode()) {
             return false;
         }
 
@@ -213,7 +204,6 @@ public class RightTupleImpl extends BaseTuple implements RightTuple {
     public void clearStaged() {
         super.clearStaged();
         this.tempNextRightTuple = null;
-        this.tempRightTupleMemory = null;
         this.tempBlocked = null;
     }
 

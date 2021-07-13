@@ -53,7 +53,6 @@ import org.drools.core.common.InternalAgenda;
 import org.drools.core.common.InternalWorkingMemory;
 import org.drools.core.common.RuleBasePartitionId;
 import org.drools.core.definitions.InternalKnowledgePackage;
-import org.drools.core.definitions.impl.KnowledgePackageImpl;
 import org.drools.core.definitions.rule.impl.RuleImpl;
 import org.drools.core.event.KieBaseEventSupport;
 import org.drools.core.factmodel.ClassDefinition;
@@ -191,6 +190,10 @@ public class KnowledgeBaseImpl
 
     private KieSessionsPool sessionPool;
 
+    private boolean mutable = true;
+
+    private boolean hasMultipleAgendaGroups = false;
+
     public KnowledgeBaseImpl() { }
 
     public KnowledgeBaseImpl(final String id,
@@ -220,6 +223,8 @@ public class KnowledgeBaseImpl
         if (this.config.getSessionPoolSize() > 0) {
             sessionPool = newKieSessionsPool( this.config.getSessionPoolSize() );
         }
+
+        mutable = this.config.isMutabilityEnabled();
     }
 
     @Override
@@ -435,8 +440,7 @@ public class KnowledgeBaseImpl
             droolsStream = new DroolsObjectInputStream(bytes);
         }
 
-        // boolean classLoaderCacheEnabled field
-        droolsStream.readBoolean();
+        this.hasMultipleAgendaGroups = droolsStream.readBoolean();
         Map<String, byte[]> store = (Map<String, byte[]>) droolsStream.readObject();
 
         this.rootClassLoader = createProjectClassLoader(droolsStream.getParentClassLoader(), store);
@@ -552,8 +556,7 @@ public class KnowledgeBaseImpl
             droolsStream = new DroolsObjectOutputStream(bytes);
         }
         try {
-            // must write this option first in order to properly deserialize later
-            droolsStream.writeBoolean(this.config.isClassLoaderCacheEnabled());
+            droolsStream.writeBoolean(this.hasMultipleAgendaGroups);
 
             droolsStream.writeObject((( ProjectClassLoader ) rootClassLoader).getStore());
 
@@ -935,7 +938,7 @@ public class KnowledgeBaseImpl
             }
 
             if ( ! newPkg.getResourceTypePackages().isEmpty() ) {
-                KieWeavers weavers = ServiceRegistry.getInstance().get( KieWeavers.class );
+                KieWeavers weavers = ServiceRegistry.getService( KieWeavers.class );
                 for ( ResourceTypePackage rtkKpg : newPkg.getResourceTypePackages().values() ) {
                     weavers.weave( this, newPkg, rtkKpg );
                 }
@@ -971,11 +974,7 @@ public class KnowledgeBaseImpl
                     break;
                 }
             }
-            try {
-                processTypeDeclaration( newDecl, newPkg );
-            } catch (ClassNotFoundException e) {
-                throw new RuntimeException( "unable to resolve Type Declaration class '" + newDecl.getTypeClassName() + "'", e );
-            }
+            processTypeDeclaration( newDecl, newPkg );
         }
     }
 
@@ -1005,6 +1004,10 @@ public class KnowledgeBaseImpl
         return false;
     }
 
+    public boolean hasMultipleAgendaGroups() {
+        return hasMultipleAgendaGroups;
+    }
+
     private void disableMultithreadEvaluation(String warningMessage) {
         config.enforceSingleThreadEvaluation();
         logger.warn( warningMessage );
@@ -1014,7 +1017,7 @@ public class KnowledgeBaseImpl
                 ObjectSinkPropagator sink = otn.getObjectSinkPropagator();
                 if (sink instanceof CompositePartitionAwareObjectSinkAdapter) {
                     otn.setObjectSinkPropagator( ( (CompositePartitionAwareObjectSinkAdapter) sink )
-                                                         .asNonPartitionedSinkPropagator( config.getAlphaNodeHashingThreshold() ) );
+                                                         .asNonPartitionedSinkPropagator( config.getAlphaNodeHashingThreshold(), config.getAlphaNodeRangeIndexThreshold() ) );
                 }
             }
         }
@@ -1041,7 +1044,7 @@ public class KnowledgeBaseImpl
         this.classTypeDeclaration.put( newDecl.getTypeClassName(), newDecl );
     }
 
-    protected void processTypeDeclaration( TypeDeclaration newDecl, InternalKnowledgePackage newPkg ) throws ClassNotFoundException {
+    protected void processTypeDeclaration( TypeDeclaration newDecl, InternalKnowledgePackage newPkg ) {
         JavaDialectRuntimeData runtime = ((JavaDialectRuntimeData) newPkg.getDialectRuntimeRegistry().getDialectData( "java" ));
 
         TypeDeclaration typeDeclaration = this.classTypeDeclaration.get( newDecl.getTypeClassName() );
@@ -1049,16 +1052,18 @@ public class KnowledgeBaseImpl
             String className = newDecl.getTypeClassName();
 
             byte [] def = runtime != null ? runtime.getClassDefinition(convertClassToResourcePath(className)) : null;
-            Class<?> definedKlass = registerAndLoadTypeDefinition( className, def );
+            try {
+                Class<?> definedKlass = registerAndLoadTypeDefinition( className, def );
 
-            if ( definedKlass == null && newDecl.isNovel() ) {
-                throw new RuntimeException( "Registering null bytes for class " + className );
+                if (newDecl.getTypeClassDef() == null) {
+                    newDecl.setTypeClassDef( new ClassDefinition() );
+                }
+                newDecl.setTypeClass( definedKlass );
+            } catch (ClassNotFoundException e) {
+                if (newDecl.isNovel()) {
+                    throw new RuntimeException( "unable to resolve Type Declaration class '" + className + "'", e );
+                }
             }
-
-            if (newDecl.getTypeClassDef() == null) {
-                newDecl.setTypeClassDef( new ClassDefinition() );
-            }
-            newDecl.setTypeClass( definedKlass );
 
             this.classTypeDeclaration.put( className, newDecl );
             typeDeclaration = newDecl;
@@ -1069,7 +1074,7 @@ public class KnowledgeBaseImpl
             newDecl.setTypeClass( definedKlass );
 
             mergeTypeDeclarations( typeDeclaration,
-                                   newDecl );
+                    newDecl );
         }
 
         // update existing OTNs
@@ -1096,7 +1101,7 @@ public class KnowledgeBaseImpl
             // if we are running in STREAM mode, update expiration offset
             for( EntryPointNode ep : this.rete.getEntryPointNodes().values() ) {
                 for( ObjectTypeNode node : ep.getObjectTypeNodes().values() ) {
-                    if( node.isAssignableFrom( typeDeclaration.getObjectType() ) ) {
+                    if( node.getObjectType().equals( typeDeclaration.getObjectType() ) ) {
                         node.setExpirationOffset( Math.max( node.getExpirationOffset(), exp ) );
                     }
                 }
@@ -1316,7 +1321,7 @@ public class KnowledgeBaseImpl
         }
 
         if ( ! newPkg.getResourceTypePackages().isEmpty() ) {
-            KieWeavers weavers = ServiceRegistry.getInstance().get(KieWeavers.class);
+            KieWeavers weavers = ServiceRegistry.getService(KieWeavers.class);
             for ( ResourceTypePackage rtkKpg : newPkg.getResourceTypePackages().values() ) {
                 weavers.merge( this, pkg, rtkKpg );
             }
@@ -1521,6 +1526,7 @@ public class KnowledgeBaseImpl
     }
 
     private void internalAddRule( RuleImpl rule ) {
+        this.hasMultipleAgendaGroups |= !rule.isMainAgendaGroup();
         this.eventSupport.fireBeforeRuleAdded( rule );
         this.reteooBuilder.addRule(rule);
         this.eventSupport.fireAfterRuleAdded( rule );
@@ -1666,10 +1672,16 @@ public class KnowledgeBaseImpl
     }
 
     public void executeQueuedActions() {
-        DialectRuntimeRegistry registry;
-        while (( registry = reloadPackageCompilationData.poll() ) != null) {
-            registry.onBeforeExecute();
+        if (mutable) {
+            DialectRuntimeRegistry registry;
+            while ((registry = reloadPackageCompilationData.poll()) != null) {
+                registry.onBeforeExecute();
+            }
         }
+    }
+
+    private void addReloadDialectDatas( DialectRuntimeRegistry registry ) {
+        this.reloadPackageCompilationData.offer( registry );
     }
 
     public RuleBasePartitionId createNewPartitionId() {
@@ -1690,10 +1702,6 @@ public class KnowledgeBaseImpl
         } finally {
             readUnlock();
         }
-    }
-
-    private void addReloadDialectDatas( DialectRuntimeRegistry registry ) {
-        this.reloadPackageCompilationData.offer( registry );
     }
 
     public ClassFieldAccessorCache getClassFieldAccessorCache() {

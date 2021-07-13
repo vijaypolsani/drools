@@ -21,19 +21,25 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import com.github.javaparser.ast.CompilationUnit;
+import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
+import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.NameExpr;
+import com.github.javaparser.ast.expr.ObjectCreationExpr;
+import com.github.javaparser.ast.expr.StringLiteralExpr;
 import org.dmg.pmml.DataDictionary;
 import org.dmg.pmml.DataField;
+import org.dmg.pmml.DataType;
 import org.dmg.pmml.MiningField;
 import org.dmg.pmml.MiningFunction;
 import org.dmg.pmml.MiningSchema;
@@ -46,8 +52,11 @@ import org.dmg.pmml.regression.RegressionModel;
 import org.dmg.pmml.regression.RegressionTable;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.kie.pmml.commons.model.enums.MINING_FUNCTION;
-import org.kie.pmml.commons.model.enums.OP_TYPE;
+import org.kie.pmml.api.enums.MINING_FUNCTION;
+import org.kie.pmml.api.enums.OP_TYPE;
+import org.kie.pmml.api.enums.PMML_MODEL;
+import org.kie.pmml.api.iinterfaces.SerializableFunction;
+import org.kie.pmml.compiler.commons.mocks.HasClassLoaderMock;
 import org.kie.pmml.models.regression.model.KiePMMLRegressionClassificationTable;
 import org.kie.pmml.models.regression.model.KiePMMLRegressionModel;
 import org.kie.pmml.models.regression.model.KiePMMLRegressionTable;
@@ -58,6 +67,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.kie.pmml.commons.utils.KiePMMLModelUtils.getSanitizedClassName;
+import static org.kie.pmml.compiler.commons.testutils.CodegenTestUtils.commonEvaluateConstructor;
 import static org.kie.pmml.compiler.commons.testutils.PMMLModelTestUtils.getCategoricalPredictor;
 import static org.kie.pmml.compiler.commons.testutils.PMMLModelTestUtils.getDataDictionary;
 import static org.kie.pmml.compiler.commons.testutils.PMMLModelTestUtils.getDataField;
@@ -74,6 +85,9 @@ import static org.kie.pmml.models.regression.compiler.factories.KiePMMLRegressio
 public class KiePMMLRegressionModelFactoryTest {
 
     private static final String PACKAGE_NAME = "packagename";
+
+    private static CompilationUnit COMPILATION_UNIT;
+    private static ClassOrInterfaceDeclaration MODEL_TEMPLATE;
 
     private static final String modelName = "firstModel";
     private static final double tableIntercept =  3.5;
@@ -110,7 +124,7 @@ public class KiePMMLRegressionModelFactoryTest {
         dataFields = new ArrayList<>();
         miningFields = new ArrayList<>();
         fieldNames.forEach(fieldName -> {
-            dataFields.add(getDataField(fieldName, OpType.CATEGORICAL));
+            dataFields.add(getDataField(fieldName, OpType.CATEGORICAL, DataType.STRING));
             miningFields.add(getMiningField(fieldName, MiningField.UsageType.ACTIVE));
         });
         targetMiningField = miningFields.get(0);
@@ -119,11 +133,17 @@ public class KiePMMLRegressionModelFactoryTest {
         transformationDictionary = new TransformationDictionary();
         miningSchema = getMiningSchema(miningFields);
         regressionModel = getRegressionModel(modelName, MiningFunction.REGRESSION, miningSchema, regressionTables);
+        COMPILATION_UNIT = getFromFileName(KIE_PMML_REGRESSION_MODEL_TEMPLATE_JAVA);
+        MODEL_TEMPLATE = COMPILATION_UNIT.getClassByName(KIE_PMML_REGRESSION_MODEL_TEMPLATE).get();
     }
 
     @Test
     public void getKiePMMLRegressionModelClasses() throws IOException, IllegalAccessException, InstantiationException {
-        KiePMMLRegressionModel retrieved = KiePMMLRegressionModelFactory.getKiePMMLRegressionModelClasses(dataDictionary, transformationDictionary, regressionModel);
+        KiePMMLRegressionModel retrieved = KiePMMLRegressionModelFactory.getKiePMMLRegressionModelClasses(dataDictionary,
+                                                                                                          transformationDictionary,
+                                                                                                          regressionModel,
+                                                                                                          PACKAGE_NAME,
+                                                                                                          new HasClassLoaderMock());
         assertNotNull(retrieved);
         assertEquals(regressionModel.getModelName(), retrieved.getName());
         assertEquals(MINING_FUNCTION.byName(regressionModel.getMiningFunction().value()), retrieved.getMiningFunction());
@@ -138,7 +158,8 @@ public class KiePMMLRegressionModelFactoryTest {
     public void getKiePMMLRegressionModelSourcesMap() throws IOException {
         Map<String, String> retrieved = KiePMMLRegressionModelFactory.getKiePMMLRegressionModelSourcesMap(dataDictionary, transformationDictionary, regressionModel, PACKAGE_NAME);
         assertNotNull(retrieved);
-        int expectedSize = regressionTables.size() + 2; // One for classification and one for the whole model
+        int expectedSize = regressionTables.size()
+                + 2; // One for classification and one for the whole model
         assertEquals(expectedSize, retrieved.size());
     }
 
@@ -160,37 +181,26 @@ public class KiePMMLRegressionModelFactoryTest {
     }
 
     @Test
-    public void populateConstructor() {
-        CompilationUnit templateCU = getFromFileName(KIE_PMML_REGRESSION_MODEL_TEMPLATE_JAVA);
-        ConstructorDeclaration constructorDeclaration = templateCU
-                .getClassByName(KIE_PMML_REGRESSION_MODEL_TEMPLATE)
-                .get()
-                .getDefaultConstructor()
-                .get();
-        String generatedClassName = "GeneratedClassName";
+    public void setConstructor() {
         String nestedTable = "NestedTable";
-        String targetField = "targetField";
-        MINING_FUNCTION miningFunction = MINING_FUNCTION.CLASSIFICATION;
-        String modelName = "modelName";
-        KiePMMLRegressionModelFactory.populateConstructor(generatedClassName,
-                                                          nestedTable,
-                                                          constructorDeclaration,
-                                                          targetField,
-                                                          miningFunction,
-                                                          modelName);
-        String expected = String.format("public %s() {\n" +
-                                                "    super(\"%s\");\n" +
-                                                "    regressionTable = new %s();\n" +
-                                                "    targetField = \"%s\";\n" +
-                                                "    miningFunction = %s;\n" +
-                                                "    pmmlMODEL = org.kie.pmml.commons.model.enums.PMML_MODEL.REGRESSION_MODEL;\n" +
-                                                "}",
-                                        generatedClassName,
-                                        modelName,
-                                        nestedTable,
-                                        targetField,
-                                        miningFunction.getClass().getName() + "." + miningFunction.name());
-        assertEquals(expected, constructorDeclaration.toString());
+        MINING_FUNCTION miningFunction = MINING_FUNCTION.byName(regressionModel.getMiningFunction().value());
+        final ClassOrInterfaceDeclaration modelTemplate = MODEL_TEMPLATE.clone();
+        KiePMMLRegressionModelFactory.setConstructor(regressionModel,
+                                                     dataDictionary,
+                                                     transformationDictionary,
+                                                     modelTemplate,
+                                                     nestedTable);
+        Map<Integer, Expression> superInvocationExpressionsMap = new HashMap<>();
+        superInvocationExpressionsMap.put(0, new NameExpr(String.format("\"%s\"", regressionModel.getModelName())));
+        Map<String, Expression> assignExpressionMap = new HashMap<>();
+        assignExpressionMap.put("targetField", new StringLiteralExpr(targetMiningField.getName().getValue()));
+        assignExpressionMap.put("miningFunction", new NameExpr(miningFunction.getClass().getName() + "." + miningFunction.name()));
+        assignExpressionMap.put("pmmlMODEL", new NameExpr(PMML_MODEL.class.getName() + "." + PMML_MODEL.REGRESSION_MODEL.name()));
+        ObjectCreationExpr objectCreationExpr = new ObjectCreationExpr();
+        objectCreationExpr.setType(nestedTable);
+        assignExpressionMap.put("regressionTable", objectCreationExpr);
+        ConstructorDeclaration constructorDeclaration = modelTemplate.getDefaultConstructor().get();
+        assertTrue(commonEvaluateConstructor(constructorDeclaration, getSanitizedClassName(regressionModel.getModelName()), superInvocationExpressionsMap, assignExpressionMap));
     }
 
     @Test
@@ -213,15 +223,15 @@ public class KiePMMLRegressionModelFactoryTest {
 
     private void evaluateRegressionTable(KiePMMLRegressionTable regressionTable, RegressionTable originalRegressionTable) {
         assertEquals(originalRegressionTable.getIntercept(), regressionTable.getIntercept());
-        final Map<String, Function<Double, Double>> numericFunctionMap = regressionTable.getNumericFunctionMap();
+        final Map<String, SerializableFunction<Double, Double>> numericFunctionMap = regressionTable.getNumericFunctionMap();
         for (NumericPredictor numericPredictor : originalRegressionTable.getNumericPredictors()) {
             assertTrue(numericFunctionMap.containsKey(numericPredictor.getName().getValue()));
         }
-        final Map<String, Function<Object, Double>> categoricalFunctionMap = regressionTable.getCategoricalFunctionMap();
+        final Map<String, SerializableFunction<Object, Double>> categoricalFunctionMap = regressionTable.getCategoricalFunctionMap();
         for (CategoricalPredictor categoricalPredictor : originalRegressionTable.getCategoricalPredictors()) {
             assertTrue(categoricalFunctionMap.containsKey(categoricalPredictor.getName().getValue()));
         }
-        final Map<String, Function<Map<String, Object>, Double>> predictorTermsFunctionMap = regressionTable.getPredictorTermsFunctionMap();
+        final Map<String, SerializableFunction<Map<String, Object>, Double>> predictorTermsFunctionMap = regressionTable.getPredictorTermsFunctionMap();
         for (PredictorTerm predictorTerm : originalRegressionTable.getPredictorTerms()) {
             assertTrue(predictorTermsFunctionMap.containsKey(predictorTerm.getName().getValue()));
         }

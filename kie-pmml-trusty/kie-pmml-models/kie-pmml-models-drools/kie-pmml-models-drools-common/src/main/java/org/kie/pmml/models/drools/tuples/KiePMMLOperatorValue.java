@@ -15,16 +15,18 @@
  */
 package org.kie.pmml.models.drools.tuples;
 
+import java.io.Serializable;
 import java.util.Objects;
 
-import org.kie.pmml.commons.model.enums.OPERATOR;
+import org.kie.pmml.api.enums.OPERATOR;
 
 /**
  * Tupla representing the operator and the value to be applied to a given field
  */
-public class KiePMMLOperatorValue {
+public class KiePMMLOperatorValue implements Serializable {
 
     public static final String VALUE_CONSTRAINT_PATTERN = "value %s %s";
+    private static final long serialVersionUID = 4850428778643763607L;
     private final OPERATOR operator;
     private final Object value;
     private final String constraintsString;

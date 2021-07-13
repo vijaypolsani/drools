@@ -7,7 +7,7 @@
   <parent>
     <groupId>org.kie</groupId>
     <artifactId>kie-dmn</artifactId>
-    <version>7.42.0-SNAPSHOT</version>
+    <version>7.58.0-SNAPSHOT</version>
   </parent>
 
   <artifactId>kie-dmn-feel</artifactId>
@@ -116,7 +116,7 @@
       <artifactId>asciidoctorj</artifactId>
       <scope>test</scope>
     </dependency>
-    
+
   </dependencies>
 
   <build>
@@ -127,7 +127,7 @@
       <testResource>
           <directory>${project.basedir}/../</directory>
           <includes>
-              <include>FEELbuiltinfunctions.adoc</include>
+              <include>ref-dmn-feel-builtin-functions.adoc</include>
           </includes>
           <filtering>false</filtering>
       </testResource>

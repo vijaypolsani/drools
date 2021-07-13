@@ -25,7 +25,6 @@ import org.drools.core.common.InternalFactHandle;
 import org.drools.core.common.InternalWorkingMemory;
 import org.drools.core.common.RuleBasePartitionId;
 import org.drools.core.reteoo.builder.BuildContext;
-import org.drools.core.rule.constraint.MvelConstraint;
 import org.drools.core.spi.AlphaNodeFieldConstraint;
 import org.drools.core.spi.PropagationContext;
 import org.drools.core.util.bitmask.BitMask;
@@ -75,17 +74,15 @@ public class AlphaNode extends ObjectSource
                 context.getPartitionId(),
                 context.getKnowledgeBase().getConfiguration().isMultithreadEvaluation(),
                 objectSource,
-                context.getKnowledgeBase().getConfiguration().getAlphaNodeHashingThreshold());
+                context.getKnowledgeBase().getConfiguration().getAlphaNodeHashingThreshold(),
+                context.getKnowledgeBase().getConfiguration().getAlphaNodeRangeIndexThreshold());
 
         this.constraint = constraint.cloneIfInUse();
-        if (this.constraint instanceof MvelConstraint) {
-            ((MvelConstraint) this.constraint).registerEvaluationContext(context);
-        }
+        this.constraint.registerEvaluationContext(context);
 
         initDeclaredMask(context);
         hashcode = calculateHashCode();
     }
-
 
     public void readExternal(ObjectInput in) throws IOException,
             ClassNotFoundException {
@@ -115,7 +112,8 @@ public class AlphaNode extends ObjectSource
         return NodeTypeEnums.AlphaNode;
     }
 
-    public void attach(BuildContext context) {
+    public void doAttach(BuildContext context) {
+        super.doAttach(context);
         this.source.addObjectSink(this);
     }
 
@@ -125,7 +123,7 @@ public class AlphaNode extends ObjectSource
             if (source instanceof AlphaNode) {
                 source.setPartitionId( context, partitionId );
             }
-            source.sink.changeSinkPartition( (ObjectSink)this, this.partitionId, partitionId, source.alphaNodeHashingThreshold );
+            source.sink.changeSinkPartition( this, this.partitionId, partitionId, source.alphaNodeHashingThreshold, source.alphaNodeRangeIndexThreshold );
         }
         this.partitionId = partitionId;
     }
@@ -188,15 +186,12 @@ public class AlphaNode extends ObjectSource
             return true;
         }
 
-        if ( object == null || !(object instanceof AlphaNode) || this.hashCode() != object.hashCode() ) {
+        if ( !(object instanceof AlphaNode) || this.hashCode() != object.hashCode() ) {
             return false;
         }
 
         AlphaNode other = (AlphaNode) object;
-        return this.source.getId() == other.source.getId() &&
-                (constraint instanceof MvelConstraint ?
-                    ((MvelConstraint) constraint).equals(other.constraint, getKnowledgeBase()) :
-                    constraint.equals(other.constraint));
+        return this.source.getId() == other.source.getId() && constraint.equals(other.constraint, getKnowledgeBase());
     }
 
     /**
@@ -254,12 +249,17 @@ public class AlphaNode extends ObjectSource
         public void assertObject(final InternalFactHandle handle,
                                  final PropagationContext propagationContext,
                                  final InternalWorkingMemory workingMemory) {
-
-            if (this.constraint.isAllowed(handle,
-                    workingMemory)) {
-                this.sink.assertObject(handle,
-                        propagationContext,
-                        workingMemory);
+            try {
+                if (this.constraint.isAllowed(handle, workingMemory)) {
+                    this.sink.assertObject(handle, propagationContext, workingMemory);
+                }
+            } catch (RuntimeException e) {
+                // Forcing the jitting of a constraint the eveluation may throw a CCE
+                // it is safe to ignore it since this means that the old fact is no longer compatible
+                // with the updated constraint and then its propagation should be skipped
+                if (!(e.getCause() instanceof ClassCastException)) {
+                    throw e;
+                }
             }
         }
 

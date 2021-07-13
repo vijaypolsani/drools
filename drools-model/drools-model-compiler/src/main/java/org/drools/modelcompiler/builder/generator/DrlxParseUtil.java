@@ -26,7 +26,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -36,12 +35,17 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.Node;
+import com.github.javaparser.ast.NodeList;
+import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
+import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.ArrayAccessExpr;
 import com.github.javaparser.ast.expr.ArrayCreationExpr;
 import com.github.javaparser.ast.expr.AssignExpr;
@@ -59,8 +63,11 @@ import com.github.javaparser.ast.expr.IntegerLiteralExpr;
 import com.github.javaparser.ast.expr.LambdaExpr;
 import com.github.javaparser.ast.expr.LiteralExpr;
 import com.github.javaparser.ast.expr.LongLiteralExpr;
+import com.github.javaparser.ast.expr.MemberValuePair;
 import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.github.javaparser.ast.expr.Name;
 import com.github.javaparser.ast.expr.NameExpr;
+import com.github.javaparser.ast.expr.NormalAnnotationExpr;
 import com.github.javaparser.ast.expr.NullLiteralExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.SimpleName;
@@ -72,6 +79,7 @@ import com.github.javaparser.ast.nodeTypes.NodeWithOptionalScope;
 import com.github.javaparser.ast.nodeTypes.NodeWithTraversableScope;
 import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.stmt.ExpressionStmt;
+import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import com.github.javaparser.ast.type.PrimitiveType;
 import com.github.javaparser.ast.type.Type;
@@ -80,33 +88,37 @@ import org.drools.compiler.lang.descr.AnnotationDescr;
 import org.drools.compiler.lang.descr.PatternDescr;
 import org.drools.core.addon.TypeResolver;
 import org.drools.core.util.ClassUtils;
+import org.drools.core.util.MethodUtils;
 import org.drools.core.util.StringUtils;
 import org.drools.model.Index;
 import org.drools.modelcompiler.builder.errors.InvalidExpressionErrorResult;
-import org.drools.modelcompiler.util.ClassUtil;
 import org.drools.mvel.parser.DrlxParser;
 import org.drools.mvel.parser.ast.expr.BigDecimalLiteralExpr;
 import org.drools.mvel.parser.ast.expr.BigIntegerLiteralExpr;
 import org.drools.mvel.parser.ast.expr.DrlNameExpr;
 import org.drools.mvel.parser.ast.expr.DrlxExpression;
 import org.drools.mvel.parser.ast.expr.HalfBinaryExpr;
+import org.drools.mvel.parser.ast.expr.ListCreationLiteralExpression;
 import org.drools.mvel.parser.ast.expr.MapCreationLiteralExpression;
 import org.drools.mvel.parser.printer.PrintUtil;
+import org.drools.mvelcompiler.ConstraintCompiler;
+import org.drools.mvelcompiler.MvelCompiler;
+import org.drools.mvelcompiler.context.MvelCompilerContext;
 
-import static com.github.javaparser.StaticJavaParser.parseType;
 import static java.util.Optional.empty;
 import static java.util.Optional.of;
 import static java.util.stream.Collectors.toList;
+import static org.drools.core.util.MethodUtils.findMethod;
 import static org.drools.modelcompiler.builder.generator.DslMethodNames.PATTERN_CALL;
 import static org.drools.modelcompiler.builder.generator.expressiontyper.ExpressionTyper.findLeftLeafOfNameExpr;
-import static org.drools.modelcompiler.util.ClassUtil.findMethod;
 import static org.drools.modelcompiler.util.ClassUtil.toRawClass;
+import static org.drools.mvelcompiler.util.TypeUtils.toJPType;
 
 public class DrlxParseUtil {
 
     public static final String THIS_PLACEHOLDER = "_this";
 
-    private static final Map<String, Method> accessorsCache = new HashMap<>();
+    private static final ConcurrentMap<String, Method> ACCESSOR_CACHE = new ConcurrentHashMap<>();
 
     public static boolean isThisExpression( Node expr ) {
         return expr instanceof ThisExpr || (expr instanceof NameExpr && ((NameExpr)expr).getName().getIdentifier().equals(THIS_PLACEHOLDER));
@@ -133,15 +145,6 @@ public class DrlxParseUtil {
 
     private static Operator toBinaryExprOperator(HalfBinaryExpr.Operator operator) {
         return Operator.valueOf(operator.name());
-    }
-
-    public static TypedExpression nameExprToMethodCallExprWithCast(String name, java.lang.reflect.Type type, Expression scope, Type castType) {
-        TypedExpression typedExpression = nameExprToMethodCallExpr(name, type, scope);
-        if(typedExpression != null) {
-            return typedExpression.cloneWithNewExpression(new EnclosedExpr(new CastExpr(castType, typedExpression.getExpression())));
-        } else {
-            return null;
-        }
     }
 
     public static TypedExpression nameExprToMethodCallExpr(String name, java.lang.reflect.Type type, Expression scope) {
@@ -182,7 +185,7 @@ public class DrlxParseUtil {
 
     public static java.lang.reflect.Type returnTypeOfMethodCallExpr(RuleContext context, TypeResolver typeResolver, MethodCallExpr methodCallExpr, java.lang.reflect.Type clazz, Collection<String> usedDeclarations) {
         final Class[] argsType = methodCallExpr.getArguments().stream()
-                .map((Expression e) -> getExpressionType(context, typeResolver, e, usedDeclarations))
+                .map((Expression e) -> toRawClass(getExpressionType(context, typeResolver, e, usedDeclarations)))
                 .toArray(Class[]::new);
         return findMethod(toRawClass( clazz ), methodCallExpr.getNameAsString(), argsType).getGenericReturnType();
     }
@@ -206,6 +209,10 @@ public class DrlxParseUtil {
 
         if (expr instanceof MapCreationLiteralExpression) {
             return Map.class;
+        }
+
+        if (expr instanceof ListCreationLiteralExpression) {
+            return List.class;
         }
 
         if (expr instanceof NameExpr) {
@@ -266,6 +273,10 @@ public class DrlxParseUtil {
             return Object.class;
         }
 
+        if (expr.isClassExpr()) {
+            return Class.class;
+        }
+
         throw new RuntimeException("Unknown expression type: " + PrintUtil.printConstraint(expr));
     }
 
@@ -300,7 +311,7 @@ public class DrlxParseUtil {
             return long.class;
         }
         if (expr instanceof NullLiteralExpr) {
-            return ClassUtil.NullType.class;
+            return MethodUtils.NullType.class;
         }
         if (expr instanceof StringLiteralExpr) {
             return String.class;
@@ -330,7 +341,9 @@ public class DrlxParseUtil {
 
     public static Optional<Node> findRootNodeViaParent(Node expr) {
         final Optional<Node> parentNode = expr.getParentNode();
-        if (parentNode.isPresent()) {
+        if(expr instanceof Statement) { // we never use this method to navigate up to the statement
+            return Optional.empty();
+        } else if (parentNode.isPresent()) {
             return findRootNodeViaParent(parentNode.get());
         } else {
             return Optional.of(expr);
@@ -393,14 +406,16 @@ public class DrlxParseUtil {
                 return findRootNodeViaScopeRec(scope, acc);
             }).orElse(new RemoveRootNodeResult(Optional.of(expr), expr, acc.isEmpty() ? expr : acc.getLast()));
         } else if (expr instanceof NameExpr) {
-            if(!acc.isEmpty() && acc.getLast() instanceof NodeWithOptionalScope) {
-                ((NodeWithOptionalScope) acc.getLast()).setScope(null);
+            if(!acc.isEmpty() && acc.getLast() instanceof NodeWithOptionalScope<?>) {
+                ((NodeWithOptionalScope<?>) acc.getLast()).setScope(null);
 
                 for (ListIterator<Expression> iterator = acc.listIterator(); iterator.hasNext(); ) {
                     Expression e = iterator.next();
-                    NodeWithOptionalScope node = (NodeWithOptionalScope)e;
-                    if(iterator.hasNext()) {
-                        node.setScope(acc.get(iterator.nextIndex()));
+                    if(e instanceof NodeWithOptionalScope) {
+                        NodeWithOptionalScope<?> node = (NodeWithOptionalScope<?>)e;
+                        if(iterator.hasNext()) {
+                            node.setScope(acc.get(iterator.nextIndex()));
+                        }
                     }
                 }
 
@@ -466,10 +481,6 @@ public class DrlxParseUtil {
         }
     }
 
-    public static String fromVar(String key) {
-        return key.substring( "var_".length() );
-    }
-
     public static BlockStmt parseBlock(String ruleConsequenceAsBlock) {
         return StaticJavaParser.parseBlock(String.format("{%n%s%n}", ruleConsequenceAsBlock)); // if the RHS is composed only of a line of comment like `//do nothing.` then JavaParser would fail to recognize the ending
     }
@@ -489,6 +500,7 @@ public class DrlxParseUtil {
                                                              Optional<Class<?>> patternClass) {
         return generateLambdaWithoutParameters(usedDeclarations, expr, skipFirstParamAsThis, patternClass, null);
     }
+
     public static Expression generateLambdaWithoutParameters(Collection<String> usedDeclarations,
                                                              Expression expr,
                                                              boolean skipFirstParamAsThis,
@@ -506,7 +518,7 @@ public class DrlxParseUtil {
         if (!skipFirstParamAsThis) {
             Type type;
             if (canResolve) {
-                type = StaticJavaParser.parseType(patternClass.get().getCanonicalName());
+                type = toJPType(patternClass.get());
             } else {
                 type = new UnknownType();
             }
@@ -515,7 +527,7 @@ public class DrlxParseUtil {
         usedDeclarations.stream()
                         .map(s -> {
                             if (canResolve) {
-                                return new Parameter(getDelarationType(ruleContext, s), s);
+                                return new Parameter(getDeclarationType(ruleContext, s), s);
                             } else {
                                 return new Parameter(new UnknownType(), s);
                             }
@@ -533,39 +545,95 @@ public class DrlxParseUtil {
         if (usedDeclarations.isEmpty()) {
             return true;
         }
-        return usedDeclarations.stream().map(decl -> getDelarationType(ruleContext, decl)).noneMatch(type -> type instanceof UnknownType);
+        return usedDeclarations.stream().map(decl -> getDeclarationType(ruleContext, decl)).noneMatch(type -> type instanceof UnknownType);
     }
 
-    private static Type getDelarationType(RuleContext ruleContext, String variableName) {
+    private static Type getDeclarationType(RuleContext ruleContext, String variableName) {
         if (ruleContext == null) {
             return new UnknownType();
         }
         return ruleContext.getDelarationType(variableName);
     }
 
-    public static Type classToReferenceType(Class<?> declClass) {
-        String className = declClass.getCanonicalName();
-        return classNameToReferenceType(className);
+    public static AnnotationExpr createSimpleAnnotation(Class<?> annotationClass) {
+        return createSimpleAnnotation(annotationClass.getCanonicalName());
     }
 
-    public static Type classNameToReferenceType(String className) {
-        Type parsedType = parseType(className);
-        return parsedType instanceof PrimitiveType ?
-                ((PrimitiveType) parsedType).toBoxedType() :
-                parsedType;
+    public static AnnotationExpr createSimpleAnnotation(String className) {
+        return new NormalAnnotationExpr(new Name(className), new NodeList<MemberValuePair>());
     }
 
-    public static Type toType(Class<?> declClass) {
-        return parseType(declClass.getCanonicalName());
+    public static Type classToReferenceType(Class<?> declarationClass) {
+        return classNameToReferenceTypeWithBoxing(declarationClass).parsedType;
+    }
+
+    public static Type classToReferenceType(DeclarationSpec declaration) {
+        Class<?> declarationClass = declaration.getDeclarationClass();
+        String className = declarationClass.getCanonicalName();
+        ReferenceType parsedType = classNameToReferenceTypeWithBoxing(declarationClass);
+        declaration.setBoxed(parsedType.wasBoxed);
+        return parsedType.parsedType;
+    }
+
+    private static ReferenceType classNameToReferenceTypeWithBoxing(Class<?> declarationClass) {
+        Type parsedType = toJavaParserType(declarationClass);
+        if (parsedType instanceof PrimitiveType) {
+            return new ReferenceType(((PrimitiveType) parsedType).toBoxedType(), true);
+        }
+        return new ReferenceType(parsedType, false);
+    }
+
+    public static Type toJavaParserType(Class<?> cls) {
+        return toJavaParserType( cls, cls.isPrimitive() );
+    }
+
+    public static Type toJavaParserType(Class<?> cls, boolean primitive) {
+        if (primitive) {
+            if (cls == int.class || cls == Integer.class) {
+                return PrimitiveType.intType();
+            }
+            else if (cls == char.class || cls == Character.class) {
+                return PrimitiveType.charType();
+            }
+            else if (cls == long.class || cls == Long.class) {
+                return PrimitiveType.longType();
+            }
+            else if (cls == short.class || cls == Short.class) {
+                return PrimitiveType.shortType();
+            }
+            else if (cls == double.class || cls == Double.class) {
+                return PrimitiveType.doubleType();
+            }
+            else if (cls == float.class || cls == Float.class) {
+                return PrimitiveType.floatType();
+            }
+            else if (cls == boolean.class || cls == Boolean.class) {
+                return PrimitiveType.booleanType();
+            }
+            else if (cls == byte.class || cls == Byte.class) {
+                return PrimitiveType.byteType();
+            }
+        }
+        return toClassOrInterfaceType(cls);
+    }
+
+    static class ReferenceType {
+        Type parsedType;
+        Boolean wasBoxed;
+
+        public ReferenceType(Type parsedType, Boolean wasBoxed) {
+            this.parsedType = parsedType;
+            this.wasBoxed = wasBoxed;
+        }
     }
 
     public static ClassOrInterfaceType toClassOrInterfaceType( Class<?> declClass ) {
-        return toClassOrInterfaceType(declClass.getCanonicalName());
+        return new ClassOrInterfaceType(null, declClass.getCanonicalName());
     }
 
     public static ClassOrInterfaceType toClassOrInterfaceType( String className ) {
         String withoutDollars = className.replace("$", "."); // nested class in Java cannot be used in casts
-        return StaticJavaParser.parseClassOrInterfaceType(withoutDollars);
+        return withoutDollars.indexOf('<') >= 0 ? StaticJavaParser.parseClassOrInterfaceType(withoutDollars) : new ClassOrInterfaceType(null, withoutDollars);
     }
 
     public static Optional<String> findBindingIdFromDotExpression(String expression) {
@@ -620,7 +688,7 @@ public class DrlxParseUtil {
      *
      * @param expression a mutated expression
      */
-    public static void forceCastForName(String nameRef, Type type, Expression expression) {
+    public static void forceCastForName(String nameRef, Type type, Node expression) {
         List<NameExpr> allNameExprForName = expression.findAll(NameExpr.class, n -> n.getNameAsString().equals(nameRef));
         for (NameExpr n : allNameExprForName) {
             Optional<Node> parentNode = n.getParentNode();
@@ -637,7 +705,7 @@ public class DrlxParseUtil {
      * such that, if it contains a NameExpr for any of the <code>names</code>,
      * it is replaced with a FieldAccessExpr having <code>newScope</code> as the scope.
      */
-    public static void rescopeNamesToNewScope(Expression newScope, List<String> names, Expression e) {
+    public static void rescopeNamesToNewScope(Expression newScope, List<String> names, Node e) {
 
         if (e instanceof NodeWithArguments) {
             NodeWithArguments<?> arguments = (NodeWithArguments) e;
@@ -657,8 +725,8 @@ public class DrlxParseUtil {
             rescopeNamesToNewScope(newScope, names, (( UnaryExpr ) e).getExpression());
         } else if (e instanceof EnclosedExpr) {
             rescopeNamesToNewScope(newScope, names, (( EnclosedExpr ) e).getInner());
-        } else {
-            Optional<Expression> rootNode = DrlxParseUtil.findRootNodeViaScope(e);
+        } else if (e instanceof Expression) {
+            Optional<Expression> rootNode = DrlxParseUtil.findRootNodeViaScope((Expression)e);
             if (rootNode.isPresent() && rootNode.get() instanceof NameExpr) {
                 NameExpr nameExpr = (NameExpr) rootNode.get();
                 if (names.contains(nameExpr.getNameAsString())) {
@@ -674,6 +742,10 @@ public class DrlxParseUtil {
                         e.replace(nameExpr, prepend);
                     }
                 }
+            }
+        } else {
+            for (Node child : e.getChildNodes()) {
+                rescopeNamesToNewScope(newScope, names, child);
             }
         }
     }
@@ -745,11 +817,11 @@ public class DrlxParseUtil {
     }
 
     public static Method getAccessor( Class<?> clazz, String name ) {
-        return accessorsCache.computeIfAbsent( clazz.getCanonicalName() + "." + name, k -> ClassUtils.getAccessor(clazz, name) );
+        return ACCESSOR_CACHE.computeIfAbsent( clazz.getCanonicalName() + "." + name, k -> ClassUtils.getAccessor(clazz, name) );
     }
 
     public static void clearAccessorCache() {
-        accessorsCache.clear();
+        ACCESSOR_CACHE.clear();
     }
 
     public static Field getField( Class<?> clazz, String name ) {
@@ -799,6 +871,72 @@ public class DrlxParseUtil {
             return Optional.of(typeResolver.resolveType(typeName));
         } catch (ClassNotFoundException e) {
             return Optional.empty();
+        }
+    }
+
+    public static Expression unEncloseExpr(Expression expression) {
+        if(expression.isEnclosedExpr()) {
+            return unEncloseExpr(expression.asEnclosedExpr().getInner());
+        } else {
+            return expression;
+        }
+    }
+
+    public static MvelCompiler createMvelCompiler(RuleContext context) {
+        MvelCompilerContext mvelCompilerContext = new MvelCompilerContext( context.getTypeResolver(), context.getCurrentScopeSuffix() );
+
+        for (DeclarationSpec ds : context.getAllDeclarations()) {
+            mvelCompilerContext.addDeclaration(ds.getBindingId(), ds.getDeclarationClass());
+        }
+
+        for(Map.Entry<String, Method> m : context.getPackageModel().getStaticMethods().entrySet()) {
+            mvelCompilerContext.addStaticMethod(m.getKey(), m.getValue());
+        }
+
+        for(MethodDeclaration m : context.getPackageModel().getFunctions()) {
+            List<String> parametersType = m.getParameters().stream().map(Parameter::getType).map(Type::asString).collect(toList());
+            mvelCompilerContext.addDeclaredFunction(m.getNameAsString(), m.getTypeAsString(), parametersType);
+        }
+
+        return new MvelCompiler(mvelCompilerContext);
+    }
+
+
+    public static ConstraintCompiler createConstraintCompiler(RuleContext context, Optional<Class<?>> originalPatternType) {
+        MvelCompilerContext mvelCompilerContext = new MvelCompilerContext( context.getTypeResolver(), context.getCurrentScopeSuffix() );
+
+        List<DeclarationSpec> allDeclarations = new ArrayList<>(context.getAllDeclarations());
+        originalPatternType.ifPresent(pt -> {
+            allDeclarations.add(new DeclarationSpec(THIS_PLACEHOLDER, pt));
+            mvelCompilerContext.setRootPatternPrefix(pt, THIS_PLACEHOLDER);
+        });
+
+        for(Map.Entry<String, Method> m : context.getPackageModel().getStaticMethods().entrySet()) {
+            mvelCompilerContext.addStaticMethod(m.getKey(), m.getValue());
+        }
+
+        for (DeclarationSpec ds : allDeclarations) {
+            mvelCompilerContext.addDeclaration(ds.getBindingId(), ds.getDeclarationClass());
+        }
+
+        return new ConstraintCompiler(mvelCompilerContext);
+    }
+
+
+    public static boolean isBooleanBoxedUnboxed(java.lang.reflect.Type exprType) {
+        return exprType == Boolean.class || exprType == boolean.class;
+    }
+
+    public static boolean hasDuplicateExpr(BlockStmt ruleBlock, Expression expr) {
+        return ruleBlock.findFirst(expr.getClass(), expr::equals).isPresent();
+    }
+
+    public static Expression stripEnclosedExpr(EnclosedExpr eExpr) {
+        Expression inner = eExpr.getInner();
+        if (inner instanceof EnclosedExpr) {
+            return stripEnclosedExpr((EnclosedExpr) inner);
+        } else {
+            return inner;
         }
     }
 

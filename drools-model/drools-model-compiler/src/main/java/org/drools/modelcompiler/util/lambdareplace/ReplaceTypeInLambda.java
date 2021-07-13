@@ -21,17 +21,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-import com.github.javaparser.StaticJavaParser;
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.LambdaExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 
+import static org.drools.modelcompiler.builder.generator.DrlxParseUtil.toClassOrInterfaceType;
 import static org.drools.modelcompiler.builder.generator.DrlxParseUtil.toVar;
+import static org.drools.modelcompiler.builder.generator.DslMethodNames.ACCUMULATE_CALL;
+import static org.drools.modelcompiler.builder.generator.DslMethodNames.BIND_CALL;
+import static org.drools.modelcompiler.builder.generator.DslMethodNames.EVAL_EXPR_CALL;
+import static org.drools.modelcompiler.builder.generator.DslMethodNames.EXPR_CALL;
 import static org.drools.modelcompiler.builder.generator.DslMethodNames.PATTERN_CALL;
-import static org.drools.modelcompiler.builder.generator.expression.FlowExpressionBuilder.BIND_CALL;
-import static org.drools.modelcompiler.builder.generator.expression.FlowExpressionBuilder.EXPR_CALL;
 
 public class ReplaceTypeInLambda {
 
@@ -40,11 +42,19 @@ public class ReplaceTypeInLambda {
     }
 
     public static void replaceTypeInExprLambda(String bindingId, Class accumulateFunctionResultType, Expression expression) {
+        if (expression instanceof MethodCallExpr && (( MethodCallExpr ) expression).getNameAsString().equals( ACCUMULATE_CALL )) {
+            return;
+        }
+
         expression.findAll(MethodCallExpr.class).forEach(mc -> {
             if (mc.getArguments().stream().anyMatch(a -> a.toString().equals(toVar(bindingId)))) {
                 List<LambdaExpr> allLambdas = new ArrayList<>();
 
                 if (mc.getNameAsString().equals(EXPR_CALL)) {
+                    allLambdas.addAll(expression.findAll(LambdaExpr.class));
+                }
+
+                if (mc.getNameAsString().equals(EVAL_EXPR_CALL)) {
                     allLambdas.addAll(expression.findAll(LambdaExpr.class));
                 }
 
@@ -68,7 +78,7 @@ public class ReplaceTypeInLambda {
 
             if (!a.getType().isUnknownType() &&
                     (a.getNameAsString().equals("_this") || a.getNameAsString().equals(bindingId))) {
-                a.setType(StaticJavaParser.parseClassOrInterfaceType(accumulateFunctionResultType.getCanonicalName()));
+                a.setType( toClassOrInterfaceType(accumulateFunctionResultType) );
             }
         }
     }

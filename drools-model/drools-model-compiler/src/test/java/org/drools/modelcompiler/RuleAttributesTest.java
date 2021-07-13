@@ -400,6 +400,28 @@ public class RuleAttributesTest extends BaseModelTest {
         Assertions.assertThat(metadata.get(RULE_KEY)).isEqualTo("\"" + RULE_VALUE + "\"");
     }
 
+    @Test
+    public void testMetadataValue() {
+        final String rule = " package org.test;\n" +
+                            " rule R1\n" +
+                            " @metaValueString(\"asd\")\n" +
+                            " @metaValueCheck1(java.math.BigDecimal.ONE)\n" +
+                            " @metaValueCheck2(Boolean.TRUE)\n" +
+                            " @metaValueCheck3(System.out)\n" +
+                            " when\n" +
+                            " then\n" +
+                            "     System.out.println(\"Hello world!\");\n" +
+                            " end";
+
+        KieSession ksession = getKieSession(rule);
+
+        final Map<String, Object> metadata = ksession.getKieBase().getRule("org.test", "R1").getMetaData();
+
+        Assertions.assertThat(metadata.get("metaValueString")).isEqualTo("asd");
+        Assertions.assertThat(metadata.get("metaValueCheck1")).isSameAs(java.math.BigDecimal.ONE);
+        Assertions.assertThat(metadata.get("metaValueCheck2")).isSameAs(Boolean.TRUE);
+        Assertions.assertThat(metadata.get("metaValueCheck3")).isSameAs(System.out);
+    }
 
     @Test
     public void testDynamicSalience() {
@@ -428,5 +450,36 @@ public class RuleAttributesTest extends BaseModelTest {
 
         ksession.fireAllRules();
         assertEquals(list, Arrays.asList("test", 3, "ok", 1));
+    }
+
+    public static final int CONST_SALIENCE = 1;
+
+    @Test
+    public void testSalienceFromConstant() {
+        // DROOLS-5550
+        String str =
+                "import " + RuleAttributesTest.class.getCanonicalName() + "\n;" +
+                "global java.util.List list;\n" +
+                "rule R1 when\n" +
+                "    $s : String()\n" +
+                "then\n" +
+                "    list.add($s);" +
+                "end\n" +
+                "rule R2 salience RuleAttributesTest.CONST_SALIENCE when\n" +
+                "    $i : Integer()\n" +
+                "then\n" +
+                "    list.add($i);" +
+                "end\n";
+
+        KieSession ksession = getKieSession( str );
+
+        List list = new ArrayList();
+        ksession.setGlobal( "list", list );
+
+        ksession.insert( "ok" );
+        ksession.insert( 1 );
+
+        ksession.fireAllRules();
+        assertEquals(list, Arrays.asList(1, "ok"));
     }
 }

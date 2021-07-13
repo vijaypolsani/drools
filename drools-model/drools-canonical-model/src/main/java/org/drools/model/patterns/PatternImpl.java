@@ -42,6 +42,7 @@ public class PatternImpl<T> extends AbstractSinglePattern implements Pattern<T>,
     private Constraint constraint;
     private List<Binding> bindings;
     private Collection<String> watchedProps;
+    private boolean passive;
 
     public PatternImpl(Variable<T> variable) {
         this(variable, SingleConstraint.TRUE );
@@ -98,8 +99,12 @@ public class PatternImpl<T> extends AbstractSinglePattern implements Pattern<T>,
         return constraint;
     }
 
+    public boolean hasConstraints() {
+        return this.constraint != SingleConstraint.TRUE;
+    }
+
     public void addConstraint( Constraint constraint ) {
-        this.constraint = this.constraint == SingleConstraint.TRUE ? constraint : ( (AbstractConstraint) this.constraint ).with( constraint );
+        this.constraint = hasConstraints() ? ( (AbstractConstraint) this.constraint ).with( constraint ) : constraint;
     }
 
     public void addBinding(Binding binding) {
@@ -129,6 +134,14 @@ public class PatternImpl<T> extends AbstractSinglePattern implements Pattern<T>,
     @Override
     public String[] getWatchedProps() {
         return watchedProps != null ? watchedProps.toArray( new String[watchedProps.size()] ) : new String[0];
+    }
+
+    public boolean isPassive() {
+        return passive;
+    }
+
+    public void setPassive( boolean passive ) {
+        this.passive = passive;
     }
 
     private Variable[] collectInputVariables() {
@@ -174,5 +187,10 @@ public class PatternImpl<T> extends AbstractSinglePattern implements Pattern<T>,
                 "inputVars: " + Arrays.toString(inputVariables) + ", " +
                 "outputVar: " + variable + ", " +
                 "constraint: " + constraint + ")";
+    }
+
+    @Override
+    public PatternImpl cloneCondition() {
+        return new PatternImpl(variable, (( AbstractConstraint ) constraint).cloneConstraint(), bindings == null ? null : new ArrayList<>(bindings), type);
     }
 }
